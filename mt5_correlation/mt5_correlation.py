@@ -1,110 +1,73 @@
-import math
+from datetime import datetime, timedelta
+import logging.config
 import pandas as pd
-import MetaTrader5 as mt5
-import logging
-from scipy.stats.stats import pearsonr
+import pytz
+import yaml
+from mt5 import MT5
+from correlation import Correlation
+import definitions
 
+# Configure logger
+with open(fr'{definitions.ROOT_DIR}\logging_conf.yaml', 'rt') as file:
+    config = yaml.safe_load(file.read())
+    logging.config.dictConfig(config)
+    log = logging.getLogger()
 
-class MT5Correlation:
-    """
-    A class to connect to MetaTrader 5 and calculate correlation coefficients between all pairs of symbols in MarketView
-    """
+# Create mt5 class. This contains required methods for interacting with MT5.
+mt5 = MT5()
 
-    def __init__(self):
-        # Connect to MetaTrader5. Opens if not already open.
+# Gte all visible symbols
+symbols = mt5.get_symbols()
 
-        # Logger
-        self.log = logging.getLogger(__name__)
+# set time zone to UTC to avoid local offset issues, and get from and to dates (a week ago to today)
+timezone = pytz.timezone("Etc/UTC")
+utc_to = datetime.now(tz=timezone)
+utc_from = utc_to - timedelta(days=7)
 
-        # Open MT5 and log error if it could not open
-        if not mt5.initialize():
-            self.log.error("initialize() failed")
-            mt5.shutdown()
+# Get price data for selected symbols. 1 week of 15 min OHLC data for each symbol. Add to dict.
+price_data = {}
+for symbol in symbols:
+    price_data[symbol.name] = mt5.get_prices(symbol=symbol, from_date=utc_from, to_date=utc_to)
 
-        # Print connection status
-        self.log.debug(mt5.terminal_info())
+# Loop through all symbol pair combinations and calculate coefficient. Make sure you don't double count pairs
+# eg. (USD/GBP AUD/USD vs AUD/USD USD/GBP). Use grid of all symbols with i and j axis. j starts at i + 1 to
+# avoid duplicating. We will store all coefficients in a dataframe for export as CSV.
+columns = ['Symbol 1', 'Symbol 2', 'Coefficient', 'UTC Date From', 'UTC Date To', 'Interval']
+coefficients = pd.DataFrame(columns=columns)
 
-        # Print data on MetaTrader 5 version
-        self.log.debug(mt5.version())
+index = 0
+# There will be (x^2 - x) / 2 pairs where x is number of symbols
+num_pair_combinations = int((len(symbols) ** 2 - len(symbols)) / 2)
 
-    def __del__(self):
-        # shut down connection to the MetaTrader 5 terminal
-        mt5.shutdown()
+for i in range(0, len(symbols)):
+    symbol1 = symbols[i]
 
-    def get_symbols(self):
-        """
-        Gets list of symbols open in MT5 market watch.
-        :return: list of symbols
-        """
-        # Iterate symbols and get those in market watch.
-        symbols = mt5.symbols_get()
-        selected_symbols = []
-        for symbol in symbols:
-            if symbol.visible:
-                selected_symbols.append(symbol)
+    for j in range(i + 1, len(symbols)):
+        symbol2 = symbols[j]
+        index += 1
 
-        # Log symbol counts
-        total_symbols = mt5.symbols_total()
-        num_selected_symbols = len(selected_symbols)
-        self.log.info(f"{num_selected_symbols} of {total_symbols} available symbols in Market Watch.")
+        # Get price data for both symbols
+        symbol1_price_data = price_data[symbol1.name]
+        symbol2_price_data = price_data[symbol2.name]
 
-        return selected_symbols
+        # Get coefficient and store if valid
+        coefficient = Correlation.calculate_coefficient(symbol1_price_data, symbol2_price_data)
 
-    def get_prices(self, symbol, from_date, to_date):
-        """
-        Gets the 1 weeks of M15 OHLC price data for the specified symbol.
-        :param symbol: The MT5 symbol to get the price data for
-        :param from_date: Date from when to retrieve data
-        :param to_date: Date where to receive data to
-        :return: Price data for symbol as dataframe
-        """
-        # Get prices from MT5
-        prices = mt5.copy_rates_range(symbol.name, mt5.TIMEFRAME_M15, from_date, to_date)
-        self.log.info(f"{len(prices)} prices retrieved for {symbol.name}.")
+        if coefficient is not None:
+            coefficients = coefficients.append({'Symbol 1': symbol1.name, 'Symbol 2': symbol2.name,
+                                                'Coefficient': coefficient, 'UTC Date From': utc_from,
+                                                'UTC Date To': utc_to, 'Interval': 'M15'}, ignore_index=True)
 
-        # Create dataframe from data and convert time in seconds to datetime format
-        prices_dataframe = pd.DataFrame(prices)
-        prices_dataframe['time'] = pd.to_datetime(prices_dataframe['time'], unit='s')
+            log.info(f"Pair {index} of {num_pair_combinations}: {symbol1.name}:{symbol2.name} has a coefficient of "
+                     f"{coefficient}.")
+        else:
+            log.info(f"Coefficient for pair {index} of {num_pair_combinations}: {symbol1.name}:{symbol2.name} could not "
+                     f"be calculated.")
 
-        return prices_dataframe
+# Sort, highest correlated first
+coefficients = coefficients.sort_values('Coefficient', ascending=False)
 
-    def calculate_coefficient(self, symbol1_prices, symbol2_prices):
-        """
-        Calculates the correlation coefficient between two sets of price data. Uses close price.
-
-        :param symbol1_prices:
-        :param symbol2_prices:
-        :return: correlation coefficient, or None if coefficient could not be calculated.
-        """
-        # Calculate size of intersection and determine if prices for symbols have enough overlapping timestamps for
-        # correlation coefficient calculation to be meaningful. Is the smallest set at least 90% of the size of the
-        # largest set and is the overlap set size at least 90% the size of the smallest set?
-        coefficient = None
-
-        intersect_dates = (set(symbol1_prices['time']) & set(symbol2_prices['time']))
-        len_smallest_set = int(min([len(symbol1_prices.index), len(symbol2_prices.index)]))
-        len_largest_set = int(max([len(symbol1_prices.index), len(symbol2_prices.index)]))
-        similar_size = len_largest_set * .9 <= len_smallest_set
-        enough_overlap = len(intersect_dates) >= len_smallest_set * .9
-        suitable = similar_size and enough_overlap
-
-        if suitable:
-            # Calculate coefficient on close prices
-
-            # First filter prices to only include those that intersect
-            symbol1_prices_filtered = symbol1_prices[symbol1_prices['time'].isin(intersect_dates)]
-            symbol2_prices_filtered = symbol2_prices[symbol2_prices['time'].isin(intersect_dates)]
-
-            # Calculate coefficient. Only use if p value is < 0.01 (highly likely that coefficient is valid and null
-            # hypothesis is false).
-            coefficient_with_p_value = pearsonr(symbol1_prices_filtered['close'], symbol2_prices_filtered['close'])
-            coefficient = None if coefficient_with_p_value[1] > 0.01 else coefficient_with_p_value[0]
-
-            # If NaN, change to None
-            if coefficient is not None and math.isnan(coefficient):
-                coefficient = None
-
-        return coefficient
-
-
-
+# Save as CSV
+filename = f"out/Coefficients from {utc_from:%Y%m%d %H%M%S} to {utc_to:%Y%m%d %H%M%S} at M15.csv"
+log.info(f"Saving coefficients as '{filename}'.")
+coefficients.to_csv(filename, index=False)
