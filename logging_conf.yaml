@@ -1,0 +1,45 @@
+---
+version: 1
+disable_existing_loggers: False
+
+formatters:
+    brief:
+        format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        datefmt: '%H:%M:%S'
+
+    precice:
+        format: "%(asctime)s - %(threadName)s - %(name)s - %(levelname)s - %(message)s"
+        datefmt: '%Y-%m-%d %H:%M:%S'
+
+handlers:
+    console:
+        level: WARNING
+        class: logging.StreamHandler
+        formatter: brief
+        stream: ext://sys.stdout
+
+    file-debug:
+        level: DEBUG
+        class: logging.handlers.RotatingFileHandler
+        formatter: precice
+        filename: log\mt5-correlation-debug.log
+        mode: a
+        maxBytes: 2560000  # Max allowed for code insight features of PyCharm
+        backupCount: 2
+
+    file-info:
+        level: INFO
+        class: logging.FileHandler
+        formatter: precice
+        filename: log\mt5-correlation-info.log
+        mode: a
+
+root:
+    level: DEBUG
+    handlers: [console, file-info, file-debug]
+
+loggers:
+    mt5-correlation:
+        level: DEBUG
+        handlers: [console, file-info, file-debug]
+        propagate: 0
