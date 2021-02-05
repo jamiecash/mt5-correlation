@@ -18,28 +18,12 @@ handlers:
         formatter: brief
         stream: ext://sys.stdout
 
-    file-debug:
-        level: DEBUG
-        class: logging.handlers.RotatingFileHandler
-        formatter: precice
-        filename: log\mt5-correlation-debug.log
-        mode: a
-        maxBytes: 2560000  # Max allowed for code insight features of PyCharm
-        backupCount: 2
-
-    file-info:
-        level: INFO
-        class: logging.FileHandler
-        formatter: precice
-        filename: log\mt5-correlation-info.log
-        mode: a
-
 root:
     level: DEBUG
-    handlers: [console, file-info, file-debug]
+    handlers: [console]
 
 loggers:
     mt5-correlation:
         level: DEBUG
-        handlers: [console, file-info, file-debug]
+        handlers: [console]
         propagate: 0
