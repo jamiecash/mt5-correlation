@@ -13,17 +13,25 @@ formatters:
 
 handlers:
     console:
-        level: WARNING
+        level: INFO
         class: logging.StreamHandler
         formatter: brief
         stream: ext://sys.stdout
+    file:
+        level: DEBUG
+        class: logging.handlers.RotatingFileHandler
+        formatter: precice
+        filename: debug.log
+        mode: a
+        maxBytes: 2560000
+        backupCount: 1
 
 root:
     level: DEBUG
-    handlers: [console]
+    handlers: [console, file]
 
 loggers:
     mt5-correlation:
         level: DEBUG
-        handlers: [console]
+        handlers: [console, file]
         propagate: 0

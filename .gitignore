@@ -1,4 +1,7 @@
 /venv/
-/log/
-/out/
 /.idea/workspace.xml
+/gui/*.bak
+/gui/*.py
+/gui/#~wxg.autosave~app_design.wxg#
+/*.log
+/*.log.?

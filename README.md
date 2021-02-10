@@ -5,14 +5,16 @@ Calculates correlation coefficient between all symbols in MetaTrader5 Market Wat
 1) Set up your MetaTrader 5 environment ensuring that all symbols that you would like to assess for correlation are shown in your Market Watch window;
 2) Set up your python environment; and
 3) Install the required libraries.
+
 ```
-pip install -r mt5-correlation\requirements.txt
+pip install -r mt5-correlation/requirements.txt
 ```
 
 # Usage
 If you set up a virtual environment in the Setup step, ensure this is activated. Then run the script.
+
 ```
-python -m mt5_correlations\mt5_correlations.py
+python -m mt5_correlations/get_correlations.py
 ```
 
 A .csv file containing the correlation coefficient for all combinations of sybmols from the MetaTrader market watch will be produced in the current directory.
@@ -29,7 +31,7 @@ A .csv file containing the correlation coefficient for all combinations of sybmo
 |EU50Cash    |FRA40Cash   |0.99072    |2021-01-29 11:54:29|2021-02-05 11:54:29|15       |
 
 # Customising
-Edit mt5_correlations.py to customise.
+Edit get_correlations.py to customise.
 
 The coefficients are calculated only if:
 * The smallest set of price data is no less than 90% of the size of the largest set;
