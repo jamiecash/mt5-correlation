@@ -9,11 +9,48 @@ calculate:
   max_p_value: 0.05
 monitor:
   from:
-    minutes: 10
+    minutes: 15
   interval: 10
   min_prices: 400
   max_set_size_diff_pct: 50
   overlap_pct: 50
   max_p_value: 0.05
+  monitoring_threshold: 0.9
   divergence_threshold: 0.8
+logging:
+  version: 1
+  disable_existing_loggers: false
+  formatters:
+    brief:
+      format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+      datefmt: '%H:%M:%S'
+    precice:
+      format: '%(asctime)s - %(threadName)s - %(name)s - %(levelname)s - %(message)s'
+      datefmt: '%Y-%m-%d %H:%M:%S'
+  handlers:
+    console:
+      level: INFO
+      class: logging.StreamHandler
+      formatter: brief
+      stream: ext://sys.stdout
+    file:
+      level: DEBUG
+      class: logging.handlers.RotatingFileHandler
+      formatter: precice
+      filename: debug.log
+      mode: a
+      maxBytes: 2560000
+      backupCount: 1
+  root:
+    level: DEBUG
+    handlers:
+    - console
+    - file
+  loggers:
+    mt5-correlation:
+      level: DEBUG
+      handlers:
+      - console
+      - file
+      propagate: 0
 ...

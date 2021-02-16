@@ -16,8 +16,12 @@ class Correlation:
     A class to maintain the state of the calculated correlation coefficients.
     """
 
-    min_coefficient = 0.9
-    monitoring = False  # Monitoring cor correlations
+    # Minimum base coefficient for monitoring. Symbol pairs with a lower correlation
+    # coefficient than ths wont be monitored.
+    monitoring_threshold = 0.9
+
+    # Toggle on whether we are monitoring or not. Set through start_monitor and stop_monitor
+    _monitoring = False
 
     def __init__(self):
         self.log = logging.getLogger(__name__)
@@ -221,7 +225,7 @@ class Correlation:
         :return:
         """
         self.log.debug(f"Starting monitor.")
-        self.monitoring = True
+        self._monitoring = True
 
         # Create thread to run monitoring This will call private __monitor method that will run the calculation and
         # keep scheduling itself while self.monitoring is True
@@ -237,7 +241,7 @@ class Correlation:
         :return:
         """
         self.log.debug(f"Stopping monitor.")
-        self.monitoring = False
+        self._monitoring = False
 
     def __monitor(self, interval, date_from, date_to, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
                   max_p_value=0.05):
@@ -257,10 +261,10 @@ class Correlation:
         :return: correlation coefficient, or None if coefficient could not be calculated.
         :return:
         """
-        self.log.debug(f"In monitor event. Monitoring: {self.monitoring}.")
+        self.log.debug(f"In monitor event. Monitoring: {self._monitoring}.")
 
         # Only run if monitor is not stopped
-        if self.monitoring:
+        if self._monitoring:
             # Update all coefficients
             self.update_all_coefficients(date_from=date_from, date_to=date_to, min_prices=min_prices,
                                          max_set_size_diff_pct=max_set_size_diff_pct, overlap_pct=overlap_pct,
@@ -276,10 +280,10 @@ class Correlation:
     @property
     def filtered_coefficient_data(self):
         """
-        :return: Coefficient data filtered so that all base coefficients >= min coefficient
+        :return: Coefficient data filtered so that all base coefficients >= monitoring_threshold
         """
         if self.coefficient_data is not None:
-            return self.coefficient_data.loc[self.coefficient_data['Base Coefficient'] >= self.min_coefficient]
+            return self.coefficient_data.loc[self.coefficient_data['Base Coefficient'] >= self.monitoring_threshold]
         else:
             return None
 
