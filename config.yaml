@@ -9,11 +9,11 @@ calculate:
   max_p_value: 0.05
 monitor:
   from:
-    minutes: 15
+    minutes: 60
   interval: 10
-  min_prices: 400
-  max_set_size_diff_pct: 50
-  overlap_pct: 50
+  min_prices: 1000
+  max_set_size_diff_pct: 90
+  overlap_pct: 90
   max_p_value: 0.05
   monitoring_threshold: 0.9
   divergence_threshold: 0.8

@@ -17,22 +17,33 @@ class Correlation:
     """
 
     # Minimum base coefficient for monitoring. Symbol pairs with a lower correlation
-    # coefficient than ths wont be monitored.
+    # coefficient than ths won't be monitored.
     monitoring_threshold = 0.9
 
     # Toggle on whether we are monitoring or not. Set through start_monitor and stop_monitor
-    _monitoring = False
+    __monitoring = False
+    __monitoring_params = {}
 
     def __init__(self):
-        self.log = logging.getLogger(__name__)
+        self.__log = logging.getLogger(__name__)
 
         # Create dataframe
-        columns = ['Symbol 1', 'Symbol 2', 'Base Coefficient', 'UTC Date From', 'UTC Date To', 'Timeframe',
-                   'Last Check', 'Last Coefficient']
-        self.coefficient_data = pd.DataFrame(columns=columns)
+        self.__columns = ['Symbol 1', 'Symbol 2', 'Base Coefficient', 'UTC Date From', 'UTC Date To', 'Timeframe',
+                          'Last Check', 'Last Coefficient']
+        self.coefficient_data = pd.DataFrame(columns=self.__columns)
 
         # Create timer for continuous monitoring
-        self.scheduler = sched.scheduler(time.time, time.sleep)
+        self.__scheduler = sched.scheduler(time.time, time.sleep)
+
+    @property
+    def filtered_coefficient_data(self):
+        """
+        :return: Coefficient data filtered so that all base coefficients >= monitoring_threshold
+        """
+        if self.coefficient_data is not None:
+            return self.coefficient_data.loc[self.coefficient_data['Base Coefficient'] >= self.monitoring_threshold]
+        else:
+            return None
 
     def load(self, filename):
         """
@@ -67,6 +78,14 @@ class Correlation:
 
         :return:
         """
+
+        # If we are monitoring, stop. We will need to restart later
+        was_monitoring = self.__monitoring
+        if self.__monitoring:
+            self.stop_monitor()
+
+        # Clear the existing correlations
+        self.coefficient_data = pd.DataFrame(columns=self.__columns)
 
         # Create mt5 class. This contains required methods for interacting with MT5.
         mt5 = MT5()
@@ -112,17 +131,156 @@ class Correlation:
                                                       'Base Coefficient': coefficient, 'UTC Date From': date_from,
                                                       'UTC Date To': date_to, 'Timeframe': timeframe},
                                                      ignore_index=True)
-                    self.log.debug(f"Pair {index} of {num_pair_combinations}: {symbol1}:{symbol2} has a "
-                                   f"coefficient of {coefficient}.")
+                    self.__log.debug(f"Pair {index} of {num_pair_combinations}: {symbol1}:{symbol2} has a "
+                                     f"coefficient of {coefficient}.")
                 else:
-                    self.log.debug(f"Coefficient for pair {index} of {num_pair_combinations}: {symbol1}:"
-                                   f"{symbol2} could no be calculated.")
+                    self.__log.debug(f"Coefficient for pair {index} of {num_pair_combinations}: {symbol1}:"
+                                     f"{symbol2} could no be calculated.")
 
         # Sort, highest correlated first
         self.coefficient_data = self.coefficient_data.sort_values('Base Coefficient', ascending=False)
 
-    def update_coefficient(self, symbol1, symbol2, date_from, date_to, min_prices=100, max_set_size_diff_pct=90,
-                           overlap_pct=90, max_p_value=0.05):
+        # If we were monitoring, we stopped, so start again.
+        if was_monitoring:
+            self.start_monitor(interval=self.__monitoring_params['interval'],
+                               date_from=self.__monitoring_params['date_from'],
+                               date_to=self.__monitoring_params['date_to'],
+                               min_prices=self.__monitoring_params['min_prices'],
+                               max_set_size_diff_pct=self.__monitoring_params['max_set_size_diff_pct'],
+                               overlap_pct=self.__monitoring_params['overlap_pct'],
+                               max_p_value=self.__monitoring_params['max_p_value'])
+
+    def start_monitor(self, interval, date_from, date_to, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
+                      max_p_value=0.05):
+        """
+        Starts monitor to continuously update the coefficient for all symbol pairs in that meet the min_coefficient
+        threshold.
+
+        :param interval: How often to check in seconds
+        :param date_from: From date for tick data from which to calculate correlation coefficients
+        :param date_to: To date for tick data from which to calculate correlation coefficients
+        :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
+            is not met then returned coefficient will be None
+        :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
+            within this pct of each other
+        :param overlap_pct:
+        :param max_p_value: The maximum p value for the correlation to be meaningful
+
+        :return: correlation coefficient, or None if coefficient could not be calculated.
+        """
+
+        if self.__monitoring:
+            self.__log.debug(f"Request to start monitor when monitor is already running. Monitor will be stopped and"
+                             f"restarted with new parameters.")
+            self.stop_monitor()
+
+        self.__log.debug(f"Starting monitor.")
+        self.__monitoring = True
+
+        # Create thread to run monitoring This will call private __monitor method that will run the calculation and
+        # keep scheduling itself while self.monitoring is True. Store the params. We will need to use these if we have
+        # to stop and restart the monitor. Note, this happens during calculate
+        self.__monitoring_params = {'interval': interval, 'date_from': date_from, 'date_to': date_to,
+                                    'min_prices': min_prices, 'max_set_size_diff_pct': max_set_size_diff_pct,
+                                    'overlap_pct': overlap_pct, 'max_p_value': max_p_value}
+        thread = threading.Thread(target=self.__monitor, kwargs=self.__monitoring_params)
+        thread.start()
+
+    def stop_monitor(self):
+        """
+        Stops monitoring symbol pairs for correlation.
+        :return:
+        """
+        if self.__monitoring:
+            self.__log.debug(f"Stopping monitor.")
+            self.__monitoring = False
+        else:
+            self.__log.debug(f"Request to stop monitor when it is not running. No action taken.")
+
+    @staticmethod
+    def calculate_coefficient(symbol1_prices, symbol2_prices, min_prices=100, max_set_size_diff_pct=90,
+                              overlap_pct=90, max_p_value=0.05):
+        """
+        Calculates the correlation coefficient between two sets of price data. Uses close price.
+
+        :param symbol1_prices: prices or ticks for symbol 1
+        :param symbol2_prices: prices or ticks for symbol 2
+        :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
+            is not met then returned coefficient will be None
+        :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
+            within this pct of each other
+        :param overlap_pct:
+        :param max_p_value: The maximum p value for the correlation to be meaningful
+        :return: correlation coefficient, or None if coefficient could not be calculated.
+        """
+
+        # Calculate size of intersection and determine if prices for symbols have enough overlapping timestamps for
+        # correlation coefficient calculation to be meaningful. Is the smallest set at least max_set_size_diff_pct % of
+        # the size of the largest set and is the overlap set size at least overlap_pct % the size of the smallest set?
+        coefficient = None
+
+        intersect_dates = (set(symbol1_prices['time']) & set(symbol2_prices['time']))
+        len_smallest_set = int(min([len(symbol1_prices.index), len(symbol2_prices.index)]))
+        len_largest_set = int(max([len(symbol1_prices.index), len(symbol2_prices.index)]))
+        similar_size = len_largest_set * (max_set_size_diff_pct / 100) <= len_smallest_set
+        enough_overlap = len(intersect_dates) >= len_smallest_set * (overlap_pct / 100)
+        enough_prices = len_smallest_set >= min_prices
+        suitable = similar_size and enough_overlap and enough_prices
+
+        if suitable:
+            # Calculate coefficient on close prices
+
+            # First filter prices to only include those that intersect
+            symbol1_prices_filtered = symbol1_prices[symbol1_prices['time'].isin(intersect_dates)]
+            symbol2_prices_filtered = symbol2_prices[symbol2_prices['time'].isin(intersect_dates)]
+
+            # Calculate coefficient. Only use if p value is < 0.01 (highly likely that coefficient is valid and null
+            # hypothesis is false).
+            coefficient_with_p_value = pearsonr(symbol1_prices_filtered['close'], symbol2_prices_filtered['close'])
+            coefficient = None if coefficient_with_p_value[1] >= max_p_value else coefficient_with_p_value[0]
+
+            # If NaN, change to None
+            if coefficient is not None and math.isnan(coefficient):
+                coefficient = None
+
+        return coefficient
+
+    def __monitor(self, interval, date_from, date_to, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
+                  max_p_value=0.05):
+        """
+        The actual monitor method. Private. This should not be called outside of this class. Use start_monitoring and
+        stop_monitoring.
+
+        :param interval: How often to check in seconds
+        :param date_from: From date for tick data from which to calculate correlation coefficients
+        :param date_to: To date for tick data from which to calculate correlation coefficients
+        :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
+            is not met then returned coefficient will be None
+        :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
+            within this pct of each other
+        :param overlap_pct:
+        :param max_p_value: The maximum p value for the correlation to be meaningful
+
+        :return: correlation coefficient, or None if coefficient could not be calculated.
+        """
+        self.__log.debug(f"In monitor event. Monitoring: {self.__monitoring}.")
+
+        # Only run if monitor is not stopped
+        if self.__monitoring:
+            # Update all coefficients
+            self.__update_all_coefficients(date_from=date_from, date_to=date_to, min_prices=min_prices,
+                                           max_set_size_diff_pct=max_set_size_diff_pct, overlap_pct=overlap_pct,
+                                           max_p_value=max_p_value)
+
+            # Schedule the timer to run again
+            params = {'interval': interval, 'date_from': date_from, 'date_to': date_to, 'min_prices': min_prices,
+                      'max_set_size_diff_pct': max_set_size_diff_pct, 'overlap_pct': overlap_pct,
+                      'max_p_value': max_p_value}
+            self.__scheduler.enter(delay=interval, priority=1, action=self.__monitor, kwargs=params)
+            self.__scheduler.run()
+
+    def __update_coefficient(self, symbol1, symbol2, date_from, date_to, min_prices=100, max_set_size_diff_pct=90,
+                             overlap_pct=90, max_p_value=0.05):
         """
         Updates the coefficient for the specified symbol pair
         :param symbol1: Name of symbol to calculate coefficient for.
@@ -181,8 +339,8 @@ class Correlation:
 
         return coefficient
 
-    def update_all_coefficients(self, date_from, date_to, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
-                                max_p_value=0.05):
+    def __update_all_coefficients(self, date_from, date_to, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
+                                  max_p_value=0.05):
         """
         Updates the coefficient for all symbol pairs in that meet the min_coefficient threshold. Symbol pairs that meet
         the threshold can be accessed through the filtered_coefficient_data property.
@@ -201,136 +359,6 @@ class Correlation:
         for index, row in self.filtered_coefficient_data.iterrows():
             symbol1 = row['Symbol 1']
             symbol2 = row['Symbol 2']
-            self.update_coefficient(symbol1=symbol1, symbol2=symbol2, date_from=date_from, date_to=date_to,
-                                    min_prices=min_prices, max_set_size_diff_pct=max_set_size_diff_pct,
-                                    overlap_pct=overlap_pct, max_p_value=max_p_value)
-
-    def start_monitor(self, interval, date_from, date_to, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
-                      max_p_value=0.05):
-        """
-        Starts monitor to continuously update the coefficient for all symbol pairs in that meet the min_coefficient
-        threshold.
-
-        :param interval: How often to check in seconds
-        :param date_from: From date for tick data from which to calculate correlation coefficients
-        :param date_to: To date for tick data from which to calculate correlation coefficients
-        :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
-            is not met then returned coefficient will be None
-        :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
-            within this pct of each other
-        :param overlap_pct:
-        :param max_p_value: The maximum p value for the correlation to be meaningful
-        :return: correlation coefficient, or None if coefficient could not be calculated.
-
-        :return:
-        """
-        self.log.debug(f"Starting monitor.")
-        self._monitoring = True
-
-        # Create thread to run monitoring This will call private __monitor method that will run the calculation and
-        # keep scheduling itself while self.monitoring is True
-        params = {'interval': interval, 'date_from': date_from, 'date_to': date_to, 'min_prices': min_prices,
-                  'max_set_size_diff_pct': max_set_size_diff_pct, 'overlap_pct': overlap_pct,
-                  'max_p_value': max_p_value}
-        thread = threading.Thread(target=self.__monitor, kwargs=params)
-        thread.start()
-
-    def stop_monitor(self):
-        """
-        Stops monitoring symbol pairs for correlation.
-        :return:
-        """
-        self.log.debug(f"Stopping monitor.")
-        self._monitoring = False
-
-    def __monitor(self, interval, date_from, date_to, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
-                  max_p_value=0.05):
-        """
-        The actual monitor method. Private. This should not be called outside of this class. Use start_monitoring and
-        stop_monitoring.
-
-        :param interval: How often to check in seconds
-        :param date_from: From date for tick data from which to calculate correlation coefficients
-        :param date_to: To date for tick data from which to calculate correlation coefficients
-        :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
-            is not met then returned coefficient will be None
-        :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
-            within this pct of each other
-        :param overlap_pct:
-        :param max_p_value: The maximum p value for the correlation to be meaningful
-        :return: correlation coefficient, or None if coefficient could not be calculated.
-        :return:
-        """
-        self.log.debug(f"In monitor event. Monitoring: {self._monitoring}.")
-
-        # Only run if monitor is not stopped
-        if self._monitoring:
-            # Update all coefficients
-            self.update_all_coefficients(date_from=date_from, date_to=date_to, min_prices=min_prices,
-                                         max_set_size_diff_pct=max_set_size_diff_pct, overlap_pct=overlap_pct,
-                                         max_p_value=max_p_value)
-
-            # Schedule the timer to run again
-            params = {'interval': interval, 'date_from': date_from, 'date_to': date_to, 'min_prices': min_prices,
-                      'max_set_size_diff_pct': max_set_size_diff_pct, 'overlap_pct': overlap_pct,
-                      'max_p_value': max_p_value}
-            self.scheduler.enter(delay=interval, priority=1, action=self.__monitor, kwargs=params)
-            self.scheduler.run()
-
-    @property
-    def filtered_coefficient_data(self):
-        """
-        :return: Coefficient data filtered so that all base coefficients >= monitoring_threshold
-        """
-        if self.coefficient_data is not None:
-            return self.coefficient_data.loc[self.coefficient_data['Base Coefficient'] >= self.monitoring_threshold]
-        else:
-            return None
-
-    @staticmethod
-    def calculate_coefficient(symbol1_prices, symbol2_prices, min_prices=100, max_set_size_diff_pct=90,
-                              overlap_pct=90, max_p_value=0.05):
-        """
-        Calculates the correlation coefficient between two sets of price data. Uses close price.
-
-        :param symbol1_prices: prices or ticks for symbol 1
-        :param symbol2_prices: prices or ticks for symbol 2
-        :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
-            is not met then returned coefficient will be None
-        :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
-            within this pct of each other
-        :param overlap_pct:
-        :param max_p_value: The maximum p value for the correlation to be meaningful
-        :return: correlation coefficient, or None if coefficient could not be calculated.
-        """
-
-        # Calculate size of intersection and determine if prices for symbols have enough overlapping timestamps for
-        # correlation coefficient calculation to be meaningful. Is the smallest set at least max_set_size_diff_pct % of
-        # the size of the largest set and is the overlap set size at least overlap_pct % the size of the smallest set?
-        coefficient = None
-
-        intersect_dates = (set(symbol1_prices['time']) & set(symbol2_prices['time']))
-        len_smallest_set = int(min([len(symbol1_prices.index), len(symbol2_prices.index)]))
-        len_largest_set = int(max([len(symbol1_prices.index), len(symbol2_prices.index)]))
-        similar_size = len_largest_set * (max_set_size_diff_pct / 100) <= len_smallest_set
-        enough_overlap = len(intersect_dates) >= len_smallest_set * (overlap_pct / 100)
-        enough_prices = len_smallest_set >= min_prices
-        suitable = similar_size and enough_overlap and enough_prices
-
-        if suitable:
-            # Calculate coefficient on close prices
-
-            # First filter prices to only include those that intersect
-            symbol1_prices_filtered = symbol1_prices[symbol1_prices['time'].isin(intersect_dates)]
-            symbol2_prices_filtered = symbol2_prices[symbol2_prices['time'].isin(intersect_dates)]
-
-            # Calculate coefficient. Only use if p value is < 0.01 (highly likely that coefficient is valid and null
-            # hypothesis is false).
-            coefficient_with_p_value = pearsonr(symbol1_prices_filtered['close'], symbol2_prices_filtered['close'])
-            coefficient = None if coefficient_with_p_value[1] >= max_p_value else coefficient_with_p_value[0]
-
-            # If NaN, change to None
-            if coefficient is not None and math.isnan(coefficient):
-                coefficient = None
-
-        return coefficient
+            self.__update_coefficient(symbol1=symbol1, symbol2=symbol2, date_from=date_from, date_to=date_to,
+                                      min_prices=min_prices, max_set_size_diff_pct=max_set_size_diff_pct,
+                                      overlap_pct=overlap_pct, max_p_value=max_p_value)
