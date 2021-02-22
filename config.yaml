@@ -1,9 +1,9 @@
 ---
 calculate:
   from:
-    days: 7
+    days: 10
   timeframe: 15
-  min_prices: 400
+  min_prices: 500
   max_set_size_diff_pct: 90
   overlap_pct: 90
   max_p_value: 0.05
@@ -11,7 +11,7 @@ monitor:
   from:
     minutes: 60
   interval: 10
-  min_prices: 1000
+  min_prices: 500
   max_set_size_diff_pct: 90
   overlap_pct: 90
   max_p_value: 0.05
@@ -53,4 +53,6 @@ logging:
       - console
       - file
       propagate: 0
+developer:
+  inspection: true
 ...

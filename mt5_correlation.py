@@ -9,9 +9,8 @@ import wx
 import wx.lib.mixins.inspection as wit
 
 
-class CorrelationMonitorApp(wx.App, wit.InspectionMixin):
+class InspectionApp(wx.App, wit.InspectionMixin):
     # Override app to use inspection.
-    # TODO Remove wit.InspectionMixin from overrides when live.
     def OnInit(self):
         self.Init()  # initialize the inspection tool
         return True
@@ -25,8 +24,14 @@ if __name__ == "__main__":
     log_config = Config().get('logging')
     logging.config.dictConfig(log_config)
 
+    # Do we have inspection turned on. Create correct version of app
+    inspection = Config().get('developer.inspection')
+    if inspection:
+        app = InspectionApp()
+    else:
+        app = wx.App(False)
+
     # Start the app
-    app = CorrelationMonitorApp()
     frame = MonitorFrame()
     frame.Show()
     app.MainLoop()

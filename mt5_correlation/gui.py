@@ -277,8 +277,6 @@ class MonitorFrame(wx.Frame):
         res = settings_dialog.ShowModal()
         if res == wx.ID_OK:
             # Reload relevant parts of app
-            # TODO: Reload relevant parts of app once settings have changed. Stop and restart monitoring,
-            #       reload logger, filter data, refresh data window.
             restart_monitor_timer = False
             restart_gui_timer = False
             reload_correlations = False

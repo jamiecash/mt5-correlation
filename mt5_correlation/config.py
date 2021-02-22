@@ -90,6 +90,10 @@ class Config(object):
 
 
 class SettingsDialog(wx.Dialog):
+    """
+    A dialog box for changing settings. A tab for each root node, with a tree view on left for every branch and a text
+    box for every value.
+    """
 
     # Store any settings that have changed
     changed_settings = {}
@@ -189,6 +193,9 @@ class SettingsTab(wx.Panel):
     A notebook tab containing the settings tree and values for a settings root node.
     """
 
+    # Root node for this tab
+    __root_node_name = None
+
     # Parent frame. Set during constructor
     __parent_frame = None
 
@@ -196,8 +203,9 @@ class SettingsTab(wx.Panel):
     # event.
     __tree = None
     __tab_sizer = None
-    __value_sizer = None
-    __value_boxes = []
+
+    # Currently displayed value panel. Will be switched when tree menu items are selected.
+    __current_value_panel = None
 
     def __init__(self, parent_frame, notebook, root_node):
         """
@@ -205,7 +213,7 @@ class SettingsTab(wx.Panel):
 
         :param parent_frame: The frame containing the notebook.
         :param notebook. The notebook that this tab should be part of.
-        :param root_node. The root node for the settings
+        :param root_node. The root node name for the settings
         """
         # Super Constructor
         wx.Panel.__init__(self, parent=notebook)
@@ -214,6 +222,9 @@ class SettingsTab(wx.Panel):
         self.__parent_frame = parent_frame
         settings = Config().get(root_node)
 
+        # Store the root node for this tab
+        self.__root_node_name = root_node
+
         # Create logger
         self.__log = logging.getLogger(__name__)
 
@@ -221,26 +232,13 @@ class SettingsTab(wx.Panel):
         self.__tab_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.SetSizer(self.__tab_sizer)
 
-        # Create tree control
+        # Create tree control and build
         self.__tree = wx.TreeCtrl(self, wx.ID_ANY, wx.DefaultPosition, wx.DefaultSize)
-
-        # Add root to tree and use item data to store settings path
-        root = self.__tree.AddRoot(root_node)
-        self.__tree.SetItemData(root, root_node)
-
-        # Add items to root
-        self.__tree = self.__build_tree(self.__tree, root, settings)
+        self.__tree = self.__build_tree(self.__tree, None, settings)
 
         # expand tree and add it to the sizer
-        self.__tree.Expand(root)
+        self.__tree.Expand(self.__tree.GetRootItem())
         self.__tab_sizer.Add(self.__tree, 1, wx.ALL | wx.EXPAND, 1)
-
-        # Add the value sizer for settings values. This is only used for spacing, as it will be overwritten when
-        # tree items are selected.
-        self.__value_sizer =  wx.FlexGridSizer(rows=1, cols=2, vgap=2, hgap=2)
-        self.__tab_sizer.Add(self.__value_sizer, 1, wx.ALL | wx.EXPAND, 1)
-        label = wx.StaticText(self, wx.ID_ANY, " ".ljust(50), style=wx.ALIGN_LEFT)
-        self.__value_sizer.Add(label)
 
         # Bind tree selection changed
         self.__tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.__on_tree_select)
@@ -258,76 +256,44 @@ class SettingsTab(wx.Panel):
         else:
             setting_path = self.__tree.GetItemData(selected_item)
 
-        self.__populate_settings_values(setting_path)
+        # Set the panel
+        self.__switch_value_panel(setting_path)
 
     def __build_tree(self, tree, node, settings):
         """
-        Recursive function to build the tree from the node, using the settings
-        :param tree: The tree to build
-        :param node: The tree view node
+        Recursive function to build the tree and value panels from the node using the settings
+        :param tree: The tree to build. Can be None if node is None (root)
+        :param node: The tree view node. If None, then build from root.
         :param settings: The settings dict for the node.
         :return: The built tree
         """
+
+        # Build root node if node is not specified
+        if node is None:
+            setting = self.__root_node_name
+            node = self.__tree.AddRoot(setting)
+            tree.SetItemData(node, setting)
+
         for setting in settings:
+            # Get settings path
+
+            settings_path = f"{tree.GetItemData(node)}.{setting}"
+
             # Get value. If dict, add the node and recursively call this function again.
             value = settings[setting]
             if type(value) is dict:
                 # Add the node and set its settings path
                 node_id = tree.AppendItem(node, setting)
-                current_settings_path = tree.GetItemData(node)
-                tree.SetItemData(node_id, f"{current_settings_path}.{setting}")
+                tree.SetItemData(node_id, settings_path)
 
                 # Recurse
                 tree = self.__build_tree(tree, node_id, value)
 
         return tree
 
-    def __populate_settings_values(self, setting_path):
-        """
-        Populates the settings in the value sizer for a settings path.
-
-        :param setting_path:
-
-        :return:
-        """
-
-        # Get the settings for the path
-        settings = Config().get(setting_path)
-
-        # Clear the value sizer and set its rows
-        self.__value_sizer.Clear(True)
-        self.__value_sizer.SetRows(len(settings))
-
-        # Display every value that is a leaf (not dict)
-        for setting in settings:
-            value = settings[setting]
-            if type(value) is not dict:
-                # Add a label and value text box
-                label = wx.StaticText(self, wx.ID_ANY, setting, style=wx.ALIGN_LEFT)
-                self.__value_boxes.append(wx.TextCtrl(self, wx.ID_ANY, f"{value}", style=wx.ALIGN_LEFT))
-                self.__value_sizer.AddMany([(label, 0, wx.EXPAND), (self.__value_boxes[-1], 0, wx.EXPAND)])
-
-                # Bind to text change. We need to generate a handler as this will have a parameter.
-                self.__value_boxes[-1].Bind(wx.EVT_TEXT,
-                                            self.__get_on_change_evt_handler(setting_path=f'{setting_path}.{setting}'))
-
-        self.__value_sizer.Layout()
-
-    def __get_on_change_evt_handler(self, setting_path):
-        """
-        Returns a new event handler with a parameter of the settings path
-        :param setting_path:
-        :return:
-        """
-        def on_value_changed(event):
-            self.__parent_frame.changed_settings[setting_path] = event.String
-            self.__log.debug(f"Value changed for {setting_path}.")
-
-        return on_value_changed
-
     def __on_tree_select(self, event):
         """
-        Called when an item in the tree is selected. Populates the settings values
+        Called when an item in the tree is selected. Displays the correct settings panel
         :param event:
         :return:
         """
@@ -339,5 +305,96 @@ class SettingsTab(wx.Panel):
         # Get the setting path from item data
         setting_path = self.__tree.GetItemData(tree_item)
 
-        # Populate value_sizer
-        self.__populate_settings_values(setting_path)
+        # Switch the panel
+        self.__switch_value_panel(setting_path)
+
+    def __switch_value_panel(self, setting_path):
+        """
+        Switched the value panel to the correct one for the settings path
+        :param setting_path:
+        :return:
+        """
+        # Get current panel and delete.
+        if self.__current_value_panel is not None:
+            self.__current_value_panel.Destroy()
+
+        # Create the new value panel and add to sizer.
+        self.__current_value_panel = SettingsValuePanel(self.__parent_frame, self, setting_path)
+        self.__tab_sizer.Add(self.__current_value_panel, 1, wx.ALL | wx.EXPAND, 1)
+
+        # Redraw
+        self.__tab_sizer.Layout()
+
+
+class SettingsValuePanel(wx.Panel):
+    """
+    A panel containing text boxes for editing values for a settings node
+    """
+
+    __value_sizer = None
+    __value_boxes = []
+
+    def __init__(self, parent_frame, settings_tab, node):
+        """
+        Creates a tab for the settings notebook.
+
+        :param parent_frame: The frame containing the notebook.
+        :param settings_tab. The settings_tab on which this panel should be displayed.
+        :param node. The node name for the settings who's values will be presented
+        """
+        # Super Constructor
+        wx.Panel.__init__(self, parent=settings_tab)
+
+        # Create logger
+        self.__log = logging.getLogger(__name__)
+
+        # Store the parent frame and get the settings for this node.
+        self.__parent_frame = parent_frame
+        settings = Config().get(node)
+
+        leaf_settings = {}
+        for setting in settings:
+            if type(settings[setting]) is not dict:
+                leaf_settings[setting] = settings[setting]
+
+        # Add the value sizer for settings values.
+        self.__value_sizer = wx.FlexGridSizer(rows=len(leaf_settings), cols=2, vgap=2, hgap=2)
+
+        # Add the sizer to the panel
+        self.SetSizer(self.__value_sizer)
+
+        # Display every value
+        for setting in leaf_settings:
+            # Setting path
+            setting_path = f"{node}.{setting}"
+
+            # Value. Make sure that we display changed value if already changed
+            if setting_path in self.__parent_frame.changed_settings:
+                value = self.__parent_frame.changed_settings[setting_path]
+            else:
+                value = leaf_settings[setting]
+
+            # Add a label and value text box
+            label = wx.StaticText(self, wx.ID_ANY, setting, style=wx.ALIGN_LEFT)
+            self.__value_boxes.append(wx.TextCtrl(self, wx.ID_ANY, f"{value}", style=wx.ALIGN_LEFT))
+            self.__value_sizer.AddMany([(label, 0, wx.EXPAND), (self.__value_boxes[-1], 0, wx.EXPAND)])
+
+            # Bind to text change. We need to generate a handler as this will have a parameter.
+            self.__value_boxes[-1].Bind(wx.EVT_TEXT, self.__get_on_change_evt_handler(setting_path=setting_path))
+
+        # Layout the value sizer
+        self.__value_sizer.Layout()
+
+    def __get_on_change_evt_handler(self, setting_path):
+        """
+        Returns a new event handler with a parameter of the settings path
+        :param setting_path:
+        :return:
+        """
+
+        def on_value_changed(event):
+            self.__parent_frame.changed_settings[setting_path] = event.String
+            self.__log.debug(f"Value changed for {setting_path}.")
+
+        return on_value_changed
+
