@@ -110,6 +110,9 @@ class SettingsDialog(wx.Dialog):
         # Dict of changes. Will commit only on ok
         self.__changes = {}
 
+        # Dialog should be resizable
+        self.SetWindowStyle(wx.RESIZE_BORDER)
+
         # We want 2 vertical sections, the tabbed notebook and the buttons. The buttons sizer will have 2 horizontal
         # sections, one for each button.
         main_sizer = wx.BoxSizer(wx.VERTICAL)  # Notebook panel
@@ -220,7 +223,6 @@ class SettingsTab(wx.Panel):
 
         # Store the parent frame and get the settings for this tab.
         self.__parent_frame = parent_frame
-        settings = Config().get(root_node)
 
         # Store the root node for this tab
         self.__root_node_name = root_node
@@ -232,12 +234,8 @@ class SettingsTab(wx.Panel):
         self.__tab_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.SetSizer(self.__tab_sizer)
 
-        # Create tree control and build
-        self.__tree = wx.TreeCtrl(self, wx.ID_ANY, wx.DefaultPosition, wx.DefaultSize)
-        self.__tree = self.__build_tree(self.__tree, None, settings)
-
-        # expand tree and add it to the sizer
-        self.__tree.Expand(self.__tree.GetRootItem())
+        # Create tree control and add it to sizer
+        self.__tree = SettingsTree(self, self.__root_node_name)
         self.__tab_sizer.Add(self.__tree, 1, wx.ALL | wx.EXPAND, 1)
 
         # Bind tree selection changed
@@ -258,38 +256,6 @@ class SettingsTab(wx.Panel):
 
         # Set the panel
         self.__switch_value_panel(setting_path)
-
-    def __build_tree(self, tree, node, settings):
-        """
-        Recursive function to build the tree and value panels from the node using the settings
-        :param tree: The tree to build. Can be None if node is None (root)
-        :param node: The tree view node. If None, then build from root.
-        :param settings: The settings dict for the node.
-        :return: The built tree
-        """
-
-        # Build root node if node is not specified
-        if node is None:
-            setting = self.__root_node_name
-            node = self.__tree.AddRoot(setting)
-            tree.SetItemData(node, setting)
-
-        for setting in settings:
-            # Get settings path
-
-            settings_path = f"{tree.GetItemData(node)}.{setting}"
-
-            # Get value. If dict, add the node and recursively call this function again.
-            value = settings[setting]
-            if type(value) is dict:
-                # Add the node and set its settings path
-                node_id = tree.AppendItem(node, setting)
-                tree.SetItemData(node_id, settings_path)
-
-                # Recurse
-                tree = self.__build_tree(tree, node_id, value)
-
-        return tree
 
     def __on_tree_select(self, event):
         """
@@ -326,7 +292,69 @@ class SettingsTab(wx.Panel):
         self.__tab_sizer.Layout()
 
 
-class SettingsValuePanel(wx.Panel):
+class SettingsTree(wx.TreeCtrl):
+    """
+    A Tree control containing the settings nodes settings node
+    """
+
+    __root_node_name = None
+
+    def __init__(self, settings_tab, settings_node):
+        """
+        Creates a tree control for specified settings node.
+
+        :param settings_tab. The settings_tab on which this tree control should be displayed.
+        :param settings_node. The node name for the settings who's values will be presented
+        """
+        # Super Constructor
+        wx.TreeCtrl.__init__(self, parent=settings_tab)
+
+        # Set root node
+        self.__root_node_name = settings_node
+
+        # Build the tree
+        self.__build_tree(None, self.__root_node_name)
+
+        # Expand it
+        # self.ExpandAll()
+
+        # Set max size. Width should be best size width, height should be auto (-1)
+        best_width = self.GetBestSize()[0] * 2  # Hack, best size not working
+        self.SetMaxSize((best_width, -1))
+
+    def __build_tree(self, node, node_name):
+        """
+        Recursive function to build the tree and value panels from the node using the settings
+        :param node: The tree view node to build from. If none, builds from root.
+        :param node_name. The name of the node to build from.
+        """
+
+        # Build root node if node is None
+        if node is None:
+            node = self.AddRoot(self.__root_node_name)
+            self.SetItemData(node, self.__root_node_name)
+
+        # Get settings
+        node_path = self.GetItemData(node)
+        settings = Config().get(node_path)
+
+        # Iterate settings, adding branches. Recurse to add sub branches.
+        for setting in settings:
+            # Get settings path
+            settings_path = f"{self.GetItemData(node)}.{setting}"
+
+            # Get value. If dict, add the node and recursively call this function again.
+            value = settings[setting]
+            if type(value) is dict:
+                # Add the node and set its settings path
+                node_id = self.AppendItem(node, setting)
+                self.SetItemData(node_id, settings_path)
+
+                # Recurse
+                self.__build_tree(node_id, value)
+
+
+class SettingsValuePanel(wx.ScrolledWindow):
     """
     A panel containing text boxes for editing values for a settings node
     """
@@ -336,14 +364,14 @@ class SettingsValuePanel(wx.Panel):
 
     def __init__(self, parent_frame, settings_tab, node):
         """
-        Creates a tab for the settings notebook.
+        Creates a panel containing values for a settings node.
 
         :param parent_frame: The frame containing the notebook.
         :param settings_tab. The settings_tab on which this panel should be displayed.
         :param node. The node name for the settings who's values will be presented
         """
         # Super Constructor
-        wx.Panel.__init__(self, parent=settings_tab)
+        wx.ScrolledWindow.__init__(self, parent=settings_tab)
 
         # Create logger
         self.__log = logging.getLogger(__name__)
@@ -385,6 +413,9 @@ class SettingsValuePanel(wx.Panel):
         # Layout the value sizer
         self.__value_sizer.Layout()
 
+        # Setup scrollbars
+        self.SetScrollbars(1, 1, 1000, 1000)
+
     def __get_on_change_evt_handler(self, setting_path):
         """
         Returns a new event handler with a parameter of the settings path
@@ -397,4 +428,3 @@ class SettingsValuePanel(wx.Panel):
             self.__log.debug(f"Value changed for {setting_path}.")
 
         return on_value_changed
-
