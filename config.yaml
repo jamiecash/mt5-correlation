@@ -3,20 +3,21 @@ calculate:
   from:
     days: 10
   timeframe: 15
-  min_prices: 500
+  min_prices: 600
   max_set_size_diff_pct: 90
   overlap_pct: 90
   max_p_value: 0.05
 monitor:
   from:
-    minutes: 60
+    minutes: 10
   interval: 10
-  min_prices: 500
-  max_set_size_diff_pct: 90
-  overlap_pct: 90
+  min_prices: 300
+  max_set_size_diff_pct: 50
+  overlap_pct: 50
   max_p_value: 0.05
   monitoring_threshold: 0.9
   divergence_threshold: 0.8
+  tick_cache_time: 10
 logging:
   version: 1
   disable_existing_loggers: false

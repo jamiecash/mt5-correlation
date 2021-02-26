@@ -1,5 +1,10 @@
 import wx
 import wx.grid
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
+import matplotlib.dates
+import matplotlib
+
 from mt5_correlation.correlation import Correlation
 from mt5_correlation.config import Config, SettingsDialog
 from datetime import datetime, timedelta
@@ -7,15 +12,21 @@ import pytz
 import pandas as pd
 import logging
 import logging.config
+import os
+
+matplotlib.use('WXAgg')
 
 
 class MonitorFrame(wx.Frame):
 
     cor = None
     rows = 0  # Need to track as we need to notify grid if row count changes.
-    opened_filename = None  # So we can save to same file as we opened
+    __opened_filename = None  # So we can save to same file as we opened
     config = None  # The applications config
 
+    __selected_correlation = []  # List of Symbol 1 & Symbol 2
+
+    # Columns for coefficient table
     COLUMN_INDEX = 0
     COLUMN_SYMBOL1 = 1
     COLUMN_SYMBOL2 = 2
@@ -31,7 +42,7 @@ class MonitorFrame(wx.Frame):
         wx.Frame.__init__(self, parent=None, id=wx.ID_ANY, title="Divergence Monitor")
 
         # Create logger and get config
-        self.log = logging.getLogger(__name__)
+        self.__log = logging.getLogger(__name__)
         self.config = Config()
 
         # Create correlation instance to maintain state of calculated coefficients. Set min coefficient from config
@@ -76,8 +87,8 @@ class MonitorFrame(wx.Frame):
         panel = wx.Panel(self, wx.ID_ANY)
         toggle_sizer = wx.BoxSizer(wx.HORIZONTAL)  # Label and toggle
         correlations_sizer = wx.BoxSizer(wx.VERTICAL)  # Toggle sizer and correlations grid
-        main_sizer = wx.BoxSizer(wx.HORIZONTAL)  # Correlations sizer and graphs panel
-        panel.SetSizer(main_sizer)
+        self.__main_sizer = wx.BoxSizer(wx.HORIZONTAL)  # Correlations sizer and graphs panel
+        panel.SetSizer(self.__main_sizer)
 
         # Create the label and toggle, populate the toggle sizer and add the toggle sizer to the correlations sizer
         monitor_toggle_label = wx.StaticText(panel, id=wx.ID_ANY, label="Monitoring")
@@ -111,12 +122,13 @@ class MonitorFrame(wx.Frame):
         self.grid_correlations.SetMaxSize((520, -1))
         correlations_sizer.Add(self.grid_correlations, 1, wx.ALL | wx.EXPAND, 1)
 
-        # Create the charts
-        charts = wx.StaticText(panel, wx.ID_ANY, "Charts Go Here", style=wx.ALIGN_CENTER_HORIZONTAL)
+        # Create the charts and hide as we have no data to display yet
+        self.__graph = GraphPanel(panel)
+        self.__graph.Hide()
 
         # Add the correlations sizer and the charts to the main sizer.
-        main_sizer.Add(correlations_sizer, 1, wx.ALL | wx.EXPAND, 1)
-        main_sizer.Add(charts, 1, wx.ALL | wx.EXPAND, 1)
+        self.__main_sizer.Add(correlations_sizer, 0, wx.ALL | wx.EXPAND, 1)
+        self.__main_sizer.Add(self.__graph, 1, wx.ALL | wx.EXPAND, 1)
 
         # Size the window.
         self.SetSize((800, 500))
@@ -129,7 +141,7 @@ class MonitorFrame(wx.Frame):
         self.monitor_toggle.Bind(wx.EVT_TOGGLEBUTTON, self.monitor)
 
         # Bind timer
-        self.Bind(wx.EVT_TIMER, self.refresh_grid, self.timer)
+        self.Bind(wx.EVT_TIMER, self.__timer_event, self.timer)
 
         # Bind menu items
         self.Bind(wx.EVT_MENU, self.open_file, menu_item_open)
@@ -138,6 +150,9 @@ class MonitorFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.calculate_coefficients, menu_item_calculate)
         self.Bind(wx.EVT_MENU, self.open_settings, menu_item_settings)
         self.Bind(wx.EVT_MENU, self.quit, menu_item_exit)
+
+        # Bind row select
+        self.Bind(wx.grid.EVT_GRID_SELECT_CELL, self.select_cell, self.grid_correlations)
 
         # Bind window close event
         self.Bind(wx.EVT_CLOSE, self.on_close, self)
@@ -149,18 +164,28 @@ class MonitorFrame(wx.Frame):
             if fileDialog.ShowModal() == wx.ID_CANCEL:
                 return  # the user changed their mind
 
-            # Load the file chosen by the user
-            self.opened_filename = fileDialog.GetPath()
-            self.cor.load(self.opened_filename)
+            # Load the file chosen by the user. Also load the corresponding data file if there is one.
+            self.__opened_filename = fileDialog.GetPath()
+            data_filename = f"{os.path.splitext(self.__opened_filename)[0]}.price.data"
+            if os.path.isfile(data_filename):
+                self.cor.load(self.__opened_filename, price_data_filename=data_filename)
+            else:
+                self.cor.load(self.__opened_filename)
 
             # Refresh data in grid
-            self.refresh_grid(event)
+            self.refresh_grid()
 
-            self.SetStatusText(f"File {self.opened_filename} loaded.")
+            self.SetStatusText(f"File {self.__opened_filename} loaded.")
 
     def save_file(self, event):
-        self.cor.save(self.opened_filename)
-        self.SetStatusText(f"File saved as {self.opened_filename}")
+        self.SetStatusText(f"Saving file as {self.__opened_filename}")
+
+        if self.__opened_filename is None:
+            self.save_file_as(event)
+        else:
+            self.cor.save(self.__opened_filename)
+
+        self.SetStatusText(f"File saved as {self.__opened_filename}")
 
     def save_file_as(self, event):
         with wx.FileDialog(self, "Save Coefficients file", wildcard="CSV (*.csv)|*.csv",
@@ -168,11 +193,14 @@ class MonitorFrame(wx.Frame):
             if fileDialog.ShowModal() == wx.ID_CANCEL:
                 return  # the user changed their mind
 
-            # Save the file, changing opened filename so next save writes to new file
-            self.opened_filename = fileDialog.GetPath()
-            self.cor.save(self.opened_filename)
+            # Save the file and price data file, changing opened filename so next save writes to new file
+            self.SetStatusText(f"Saving file as {self.__opened_filename}")
 
-            self.SetStatusText(f"File saved as {self.opened_filename}")
+            self.__opened_filename = fileDialog.GetPath()
+            data_filename = f"{os.path.splitext(self.__opened_filename)[0]}.price.data"
+            self.cor.save(self.__opened_filename, price_data_filename=data_filename)
+
+            self.SetStatusText(f"File saved as {self.__opened_filename}")
 
     def calculate_coefficients(self, event):
         # set time zone to UTC to avoid local offset issues, and get from and to dates (a week ago to today)
@@ -191,30 +219,30 @@ class MonitorFrame(wx.Frame):
         self.SetStatusText("")
 
         # Show calculated data
-        self.refresh_grid(event)
+        self.refresh_grid()
 
     def quit(self, event):
         self.Close()
 
-    def refresh_grid(self, event):
+    def refresh_grid(self):
         """
         Refreshes grid. Notifies if rows have been added or deleted.
         :return:
         """
-        self.log.debug(f"Refreshing grid. Timer running: {self.timer.IsRunning()}")
+        self.__log.debug(f"Refreshing grid. Timer running: {self.timer.IsRunning()}")
 
         # Update data
         self.table.data = self.cor.coefficient_data.copy()
 
         # Format
-        self.table.data['Base Coefficient'] = self.table.data['Base Coefficient'].map('{:.5f}'.format)
-        self.table.data['Last Check'] = pd.to_datetime(self.table.data['Last Check'], utc=True)
-        self.table.data['Last Check'] = self.table.data['Last Check'].dt.strftime('%d-%m-%y %H:%M:%S')
-        self.table.data['Last Coefficient'] = self.table.data['Last Coefficient'].map('{:.5f}'.format)
+        self.table.data.loc[:, 'Base Coefficient'] = self.table.data['Base Coefficient'].map('{:.5f}'.format)
+        self.table.data.loc[:, 'Last Check'] = pd.to_datetime(self.table.data['Last Check'], utc=True)
+        self.table.data.loc[:, 'Last Check'] = self.table.data['Last Check'].dt.strftime('%d-%m-%y %H:%M:%S')
+        self.table.data.loc[:, 'Last Coefficient'] = self.table.data['Last Coefficient'].map('{:.5f}'.format)
 
-        # Remove nans. The ones from the float column wil be str nan as they have been formatted
+        # Remove nans. The ones from the float column will be str nan as they have been formatted
         self.table.data = self.table.data.fillna('')
-        self.table.data['Last Coefficient'] = self.table.data['Last Coefficient'].replace('nan', '')
+        self.table.data.loc[:, 'Last Coefficient'] = self.table.data['Last Coefficient'].replace('nan', '')
 
         # Start refresh
         self.grid_correlations.BeginBatch()
@@ -244,24 +272,21 @@ class MonitorFrame(wx.Frame):
     def monitor(self, event):
         # Check state of toggle button. If on, then start monitoring, else stop
         if self.monitor_toggle.GetValue():
-            self.log.debug("Starting monitoring.")
+            self.__log.info("Starting monitoring.")
             self.monitor_toggle.SetBackgroundColour(wx.GREEN)
             self.monitor_toggle.SetLabelText("On")
             self.SetStatusText("Monitoring for changes to coefficients.")
 
-            # From and to dates for calculations.
-            timezone = pytz.timezone("Etc/UTC")
-            utc_to = datetime.now(tz=timezone)
-            utc_from = utc_to - timedelta(minutes=self.config.get('monitor.from.minutes'))
-
             self.timer.Start(self.config.get('monitor.interval')*1000)
-            self.cor.start_monitor(interval=self.config.get('monitor.interval'), date_from=utc_from, date_to=utc_to,
+            self.cor.start_monitor(interval=self.config.get('monitor.interval'),
+                                   from_mins=self.config.get('monitor.from.minutes'),
                                    min_prices=self.config.get('monitor.min_prices'),
                                    max_set_size_diff_pct=self.config.get('monitor.max_set_size_diff_pct'),
                                    overlap_pct=self.config.get('monitor.overlap_pct'),
-                                   max_p_value=self.config.get('monitor.max_p_value'))
+                                   max_p_value=self.config.get('monitor.max_p_value'),
+                                   cache_time=self.config.get('monitor.tick_cache_time'))
         else:
-            self.log.debug("Stopping monitoring.")
+            self.__log.info("Stopping monitoring.")
             self.monitor_toggle.SetBackgroundColour(wx.RED)
             self.monitor_toggle.SetLabelText("Off")
             self.SetStatusText("Monitoring stopped.")
@@ -288,7 +313,7 @@ class MonitorFrame(wx.Frame):
                 # If 'monitor.interval has changed then restart gui timer.
                 # If 'monitor.monitoring_threshold' has changed, then refresh correlation data.
                 # If any 'logging.' settings have changed, then reload logger config.
-                if setting.startswith('monitor. ') and setting != 'monitor.divergence_threshold':
+                if setting.startswith('monitor.') and setting != 'monitor.divergence_threshold':
                     restart_monitor_timer = True
                 if setting == 'monitor.interval':
                     restart_gui_timer = True
@@ -299,29 +324,30 @@ class MonitorFrame(wx.Frame):
 
             # Now perform the actions
             if restart_monitor_timer:
-                self.log.debug("Settings updated. Reloading monitoring timer.")
+                self.__log.info("Settings updated. Reloading monitoring timer.")
                 self.cor.stop_monitor()
                 # From and to dates for calculations.
                 timezone = pytz.timezone("Etc/UTC")
                 utc_to = datetime.now(tz=timezone)
                 utc_from = utc_to - timedelta(minutes=self.config.get('monitor.from.minutes'))
-                self.cor.start_monitor(interval=self.config.get('monitor.interval'), date_from=utc_from, date_to=utc_to,
+                self.cor.start_monitor(interval=self.config.get('monitor.interval'),
+                                       from_mins=self.config.get('monitor.from.minutes'),
                                        min_prices=self.config.get('monitor.min_prices'),
                                        max_set_size_diff_pct=self.config.get('monitor.max_set_size_diff_pct'),
                                        overlap_pct=self.config.get('monitor.overlap_pct'),
                                        max_p_value=self.config.get('monitor.max_p_value'))
             if restart_gui_timer:
-                self.log.debug("Settings updated. Restarting gui timer.")
+                self.__log.info("Settings updated. Restarting gui timer.")
                 self.timer.Stop()
                 self.timer.Start(self.config.get('monitor.interval') * 1000)
 
             if reload_correlations:
-                self.log.debug("Settings updated. Updating monitoring threshold and reloading grid.")
+                self.__log.info("Settings updated. Updating monitoring threshold and reloading grid.")
                 self.cor.monitoring_threshold = self.config.get("monitor.monitoring_threshold")
-                self.refresh_grid(event)
+                self.refresh_grid()
 
             if reload_logger:
-                self.log.debug("Settings updated. Reloading logger.")
+                self.__log.info("Settings updated. Reloading logger.")
                 log_config = Config().get('logging')
                 logging.config.dictConfig(log_config)
 
@@ -331,12 +357,63 @@ class MonitorFrame(wx.Frame):
         :param event:
         :return:
         """
-        if self.opened_filename is not None:
-            self.cor.save(self.opened_filename)
+        if self.__opened_filename is not None:
+            self.cor.save(self.__opened_filename)
 
         self.cor.stop_monitor()
 
+        # Kill graph as it seems to be stopping script from ending
+        self.__graph = None
+
+        # End
         event.Skip()
+
+    def select_cell(self, event):
+        """
+        A cell was selected. Show the graph for the correlation.
+        :param event:
+        :return:
+        """
+        # Get row and symbols.
+        row = event.GetRow()
+        symbol1 = self.grid_correlations.GetCellValue(row, self.COLUMN_SYMBOL1)
+        symbol2 = self.grid_correlations.GetCellValue(row, self.COLUMN_SYMBOL2)
+        self.__selected_correlation = [symbol1, symbol2]
+
+        self.show_graph(symbol1, symbol2)
+
+    def show_graph(self, symbol1, symbol2):
+        """
+        Displays the graph for the specified symbols correlation history
+        :param symbol1:
+        :param symbol2:
+        :return:
+        """
+        # Get the data price data for the base coefficient calculation and the coefficient history data
+        symbol_1_price_data = self.cor.get_price_data(symbol1)
+        symbol_2_price_data = self.cor.get_price_data(symbol2)
+        history_data = self.cor.get_coefficient_history(symbol1, symbol2)
+        times = history_data['UTC Date To']
+        coefficients = history_data['Coefficient']
+
+        # Display if we have any data
+        self.__log.debug(f"Refreshing history graph {symbol1}:{symbol2}.")
+        self.__graph.draw(times=times, coefficients=coefficients, prices=[symbol_1_price_data, symbol_2_price_data],
+                          symbols=[symbol1, symbol2])
+
+        # Un-hide and layout if hidden
+        if not self.__graph.IsShown():
+            self.__graph.Show()
+            self.__main_sizer.Layout()
+
+    def __timer_event(self, event):
+        """
+        Called on timer event. Refreshes grid and updatates selected graph.
+        :return:
+        """
+        self.refresh_grid()
+        if len(self.__selected_correlation) == 2:
+            self.show_graph(symbol1=self.__selected_correlation[0], symbol2=self.__selected_correlation[1])
 
 
 class DataTable(wx.grid.GridTableBase):
@@ -393,3 +470,72 @@ class DataTable(wx.grid.GridTableBase):
                     attr.SetBackgroundColour(wx.WHITE)
 
         return attr
+
+
+class GraphPanel(wx.Panel):
+    def __init__(self, parent):
+        # Super
+        wx.Panel.__init__(self, parent)
+
+        # 3  axis, price data 1, price data 2 and coefficient data. All will have axis labels and top and right boarders
+        # removed
+        self.__fig, self.__axes = plt.subplots(nrows=3, ncols=1)
+
+        # Create the canvas
+        self.__canvas = FigureCanvas(self, -1, self.__fig)
+
+        # Date format for x axes
+        self.__tick_fmt_date = matplotlib.dates.DateFormatter('%d-%b')
+        self.__tick_fmt_time = matplotlib.dates.DateFormatter('%H:%M:%S')
+
+        # Sizer etc.
+        self.__sizer = wx.BoxSizer(wx.VERTICAL)
+        self.__sizer.Add(self.__canvas, 1, wx.LEFT | wx.TOP | wx.GROW)
+        self.SetSizer(self.__sizer)
+        self.Fit()
+
+    def __del__(self):
+        # Close all plots
+        plt.close('all')
+        self.__axes = None
+        self.__fig = None
+
+    def draw(self, times, coefficients, prices=None, symbols=None):
+        """
+        Plot the correlations.
+        :param times: Series of time values for x axis
+        :param coefficients: Series of coefficients values for y axis
+        :param prices: Price data used to calculate base coefficient. List [Symbol1 Price Data, Symbol 2 Price Data]
+        :param symbols: Symbols. List [Symbol1, Symbol2]
+        :return:
+        """
+        # Clear. We will need to redraw
+        for ax in self.__axes:
+            ax.clear()
+
+        if symbols is not None and len(symbols) == 2:
+            # Price history chart for both symbols
+            for i in range(0, 2):
+                if symbols[i] is not None and prices is not None and len(prices) == 2 and prices[i] is not None:
+                    self.__axes[i].set_title(f"Base Coefficient Price Data for {symbols[i]}")
+                    self.__axes[i].set_xlabel('Time')
+                    self.__axes[i].set_ylabel('Price')
+                    self.__axes[i].plot(prices[i]['time'], prices[i]['close'])
+                    self.__axes[i].xaxis.set_major_formatter(self.__tick_fmt_date)
+                    self.__axes[i].xaxis.set_minor_formatter(self.__tick_fmt_time)
+                    plt.setp(self.__axes[i].xaxis.get_majorticklabels(), rotation=45)
+
+            # Coefficient history chart
+            self.__axes[2].set_title(f"Coefficient History for {symbols[0]}:{symbols[1]}")
+            self.__axes[2].set_xlabel('Time')
+            self.__axes[2].set_ylabel('Coefficient')
+            self.__axes[2].plot(times, coefficients)
+            self.__axes[2].set_ylim([-1, 1])
+            self.__axes[2].xaxis.set_major_formatter(self.__tick_fmt_time)
+            plt.setp(self.__axes[2].xaxis.get_majorticklabels(), rotation=45)
+
+            # Layout with padding between charts
+            self.__fig.tight_layout(pad=0.5)
+
+        # Redraw canvas
+        self.__canvas.draw()

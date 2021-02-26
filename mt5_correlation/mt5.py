@@ -35,18 +35,18 @@ class MT5:
         # Connect to MetaTrader5. Opens if not already open.
 
         # Logger
-        self.log = logging.getLogger(__name__)
+        self.__log = logging.getLogger(__name__)
 
         # Open MT5 and log error if it could not open
         if not MetaTrader5.initialize():
-            self.log.error("initialize() failed")
+            self.__log.error("initialize() failed")
             MetaTrader5.shutdown()
 
         # Print connection status
-        self.log.debug(MetaTrader5.terminal_info())
+        self.__log.debug(MetaTrader5.terminal_info())
 
         # Print data on MetaTrader 5 version
-        self.log.debug(MetaTrader5.version())
+        self.__log.debug(MetaTrader5.version())
 
     def __del__(self):
         # shut down connection to the MetaTrader 5 terminal
@@ -67,7 +67,7 @@ class MT5:
         # Log symbol counts
         total_symbols = MetaTrader5.symbols_total()
         num_selected_symbols = len(selected_symbols)
-        self.log.debug(f"{num_selected_symbols} of {total_symbols} available symbols in Market Watch.")
+        self.__log.debug(f"{num_selected_symbols} of {total_symbols} available symbols in Market Watch.")
 
         return selected_symbols
 
@@ -102,13 +102,16 @@ class MT5:
         :return: Price data for symbol as dataframe
         """
 
+        prices_dataframe = None
+
         # Get prices from MT5
         prices = MetaTrader5.copy_rates_range(symbol, timeframe, from_date, to_date)
-        self.log.debug(f"{len(prices)} prices retrieved for {symbol}.")
+        if prices is not None:
+            self.__log.debug(f"{len(prices)} prices retrieved for {symbol}.")
 
-        # Create dataframe from data and convert time in seconds to datetime format
-        prices_dataframe = pd.DataFrame(prices)
-        prices_dataframe['time'] = pd.to_datetime(prices_dataframe['time'], unit='s')
+            # Create dataframe from data and convert time in seconds to datetime format
+            prices_dataframe = pd.DataFrame(prices)
+            prices_dataframe['time'] = pd.to_datetime(prices_dataframe['time'], unit='s')
 
         return prices_dataframe
 
@@ -121,19 +124,23 @@ class MT5:
         :return: Tick data for symbol as dataframe
         """
 
+        ticks_dataframe = None
+
         # Get ticks from MT5
         ticks = MetaTrader5.copy_ticks_range(symbol, from_date, to_date, MetaTrader5.COPY_TICKS_ALL)
 
         # If ticks is None, there was an error
         if ticks is None:
             error = MetaTrader5.last_error()
-            self.log.error(f"Error retrieving ticks for {symbol}: {error}")
-            return None
+            self.__log.error(f"Error retrieving ticks for {symbol}: {error}")
         else:
-            self.log.debug(f"{len(ticks)} ticks retrieved for {symbol}.")
+            self.__log.debug(f"{len(ticks)} ticks retrieved for {symbol}.")
 
             # Create dataframe from data and convert time in seconds to datetime format
-            ticks_dataframe = pd.DataFrame(ticks)
-            ticks_dataframe['time'] = pd.to_datetime(ticks_dataframe['time'], unit='s')
+            try:
+                ticks_dataframe = pd.DataFrame(ticks)
+                ticks_dataframe['time'] = pd.to_datetime(ticks_dataframe['time'], unit='s')
+            except RecursionError:
+                self.__log.warning("Error converting ticks to dataframe.")
 
         return ticks_dataframe
