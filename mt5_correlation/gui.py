@@ -12,7 +12,6 @@ import pytz
 import pandas as pd
 import logging
 import logging.config
-import os
 
 matplotlib.use('WXAgg')
 
@@ -158,19 +157,17 @@ class MonitorFrame(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.on_close, self)
 
     def open_file(self, event):
-        with wx.FileDialog(self, "Open Coefficients file", wildcard="CSV (*.csv)|*.csv",
+        with wx.FileDialog(self, "Open Coefficients file", wildcard="cpd (*.cpd)|*.cpd",
                            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
 
             if fileDialog.ShowModal() == wx.ID_CANCEL:
                 return  # the user changed their mind
 
-            # Load the file chosen by the user. Also load the corresponding data file if there is one.
+            # Load the file chosen by the user.
             self.__opened_filename = fileDialog.GetPath()
-            data_filename = f"{os.path.splitext(self.__opened_filename)[0]}.price.data"
-            if os.path.isfile(data_filename):
-                self.cor.load(self.__opened_filename, price_data_filename=data_filename)
-            else:
-                self.cor.load(self.__opened_filename)
+
+            self.SetStatusText(f"Loading file {self.__opened_filename}.")
+            self.cor.load(self.__opened_filename)
 
             # Refresh data in grid
             self.refresh_grid()
@@ -188,7 +185,7 @@ class MonitorFrame(wx.Frame):
         self.SetStatusText(f"File saved as {self.__opened_filename}")
 
     def save_file_as(self, event):
-        with wx.FileDialog(self, "Save Coefficients file", wildcard="CSV (*.csv)|*.csv",
+        with wx.FileDialog(self, "Save Coefficients file", wildcard="cpd (*.cpd)|*.cpd",
                            style=wx.FD_SAVE) as fileDialog:
             if fileDialog.ShowModal() == wx.ID_CANCEL:
                 return  # the user changed their mind
@@ -197,8 +194,7 @@ class MonitorFrame(wx.Frame):
             self.SetStatusText(f"Saving file as {self.__opened_filename}")
 
             self.__opened_filename = fileDialog.GetPath()
-            data_filename = f"{os.path.splitext(self.__opened_filename)[0]}.price.data"
-            self.cor.save(self.__opened_filename, price_data_filename=data_filename)
+            self.cor.save(self.__opened_filename)
 
             self.SetStatusText(f"File saved as {self.__opened_filename}")
 
@@ -278,13 +274,19 @@ class MonitorFrame(wx.Frame):
             self.SetStatusText("Monitoring for changes to coefficients.")
 
             self.timer.Start(self.config.get('monitor.interval')*1000)
+
+            # Autosave filename
+            filename = self.__opened_filename if self.__opened_filename is not None else 'autosave.cpd'
+
             self.cor.start_monitor(interval=self.config.get('monitor.interval'),
                                    from_mins=self.config.get('monitor.from.minutes'),
                                    min_prices=self.config.get('monitor.min_prices'),
                                    max_set_size_diff_pct=self.config.get('monitor.max_set_size_diff_pct'),
                                    overlap_pct=self.config.get('monitor.overlap_pct'),
                                    max_p_value=self.config.get('monitor.max_p_value'),
-                                   cache_time=self.config.get('monitor.tick_cache_time'))
+                                   cache_time=self.config.get('monitor.tick_cache_time'),
+                                   autosave=self.config.get('monitor.autosave'),
+                                   filename=filename)
         else:
             self.__log.info("Stopping monitoring.")
             self.monitor_toggle.SetBackgroundColour(wx.RED)
@@ -389,9 +391,12 @@ class MonitorFrame(wx.Frame):
         :param symbol2:
         :return:
         """
-        # Get the data price data for the base coefficient calculation and the coefficient history data
+        # Get the price data for the base coefficient calculation, tick data to calculate last coefficient and  and the
+        # coefficient history data
         symbol_1_price_data = self.cor.get_price_data(symbol1)
         symbol_2_price_data = self.cor.get_price_data(symbol2)
+        symbol_1_ticks = self.cor.get_ticks(symbol1, cache_only=True)
+        symbol_2_ticks = self.cor.get_ticks(symbol2, cache_only=True)
         history_data = self.cor.get_coefficient_history(symbol1, symbol2)
         times = history_data['UTC Date To']
         coefficients = history_data['Coefficient']
@@ -399,7 +404,7 @@ class MonitorFrame(wx.Frame):
         # Display if we have any data
         self.__log.debug(f"Refreshing history graph {symbol1}:{symbol2}.")
         self.__graph.draw(times=times, coefficients=coefficients, prices=[symbol_1_price_data, symbol_2_price_data],
-                          symbols=[symbol1, symbol2])
+                          ticks=[symbol_1_ticks, symbol_2_ticks], symbols=[symbol1, symbol2])
 
         # Un-hide and layout if hidden
         if not self.__graph.IsShown():
@@ -477,9 +482,10 @@ class GraphPanel(wx.Panel):
         # Super
         wx.Panel.__init__(self, parent)
 
-        # 3  axis, price data 1, price data 2 and coefficient data. All will have axis labels and top and right boarders
+        # 3  axis, 2 price data for calculate, 2 price data for last coefficient and coefficient history.
+        # All will have axis labels and top and right boarders
         # removed
-        self.__fig, self.__axes = plt.subplots(nrows=3, ncols=1)
+        self.__fig, self.__axes = plt.subplots(nrows=5, ncols=1)
 
         # Create the canvas
         self.__canvas = FigureCanvas(self, -1, self.__fig)
@@ -500,13 +506,14 @@ class GraphPanel(wx.Panel):
         self.__axes = None
         self.__fig = None
 
-    def draw(self, times, coefficients, prices=None, symbols=None):
+    def draw(self, times, coefficients, prices=None, symbols=None, ticks=None):
         """
         Plot the correlations.
-        :param times: Series of time values for x axis
-        :param coefficients: Series of coefficients values for y axis
+        :param times: Series of time values for x axis for coefficient history chart
+        :param coefficients: Series of coefficients values for y axis of coefficient history chart
         :param prices: Price data used to calculate base coefficient. List [Symbol1 Price Data, Symbol 2 Price Data]
         :param symbols: Symbols. List [Symbol1, Symbol2]
+        :param ticks: Ticks used to calculate last coefficient. List [Symbol1, Symbol2]
         :return:
         """
         # Clear. We will need to redraw
@@ -514,25 +521,48 @@ class GraphPanel(wx.Panel):
             ax.clear()
 
         if symbols is not None and len(symbols) == 2:
-            # Price history chart for both symbols
-            for i in range(0, 2):
-                if symbols[i] is not None and prices is not None and len(prices) == 2 and prices[i] is not None:
-                    self.__axes[i].set_title(f"Base Coefficient Price Data for {symbols[i]}")
-                    self.__axes[i].set_xlabel('Time')
-                    self.__axes[i].set_ylabel('Price')
-                    self.__axes[i].plot(prices[i]['time'], prices[i]['close'])
-                    self.__axes[i].xaxis.set_major_formatter(self.__tick_fmt_date)
-                    self.__axes[i].xaxis.set_minor_formatter(self.__tick_fmt_time)
-                    plt.setp(self.__axes[i].xaxis.get_majorticklabels(), rotation=45)
+            # Axis ranges
+            price_chart_date_range = [min(min(prices[0]['time']), min(prices[1]['time'])),
+                                      max(max(prices[0]['time']), max(prices[1]['time']))]
+            tick_chart_date_range = [min(min(ticks[0]['time']), min(ticks[1]['time'])),
+                                     max(max(ticks[0]['time']), max(ticks[1]['time']))]
 
-            # Coefficient history chart
-            self.__axes[2].set_title(f"Coefficient History for {symbols[0]}:{symbols[1]}")
-            self.__axes[2].set_xlabel('Time')
-            self.__axes[2].set_ylabel('Coefficient')
-            self.__axes[2].plot(times, coefficients)
-            self.__axes[2].set_ylim([-1, 1])
-            self.__axes[2].xaxis.set_major_formatter(self.__tick_fmt_time)
-            plt.setp(self.__axes[2].xaxis.get_majorticklabels(), rotation=45)
+            # Chart config
+            titles = [f"Base Coefficient Price Data for {symbols[0]}", f"Base Coefficient Price Data for {symbols[1]}",
+                      f"Coefficient Tick Data for {symbols[0]}", f"Coefficient Tick Data for {symbols[1]}",
+                      f"Coefficient History for {symbols[0]}:{symbols[1]}"]
+            xlims = [price_chart_date_range, price_chart_date_range, tick_chart_date_range, tick_chart_date_range, None]
+            ylims = [None, None, None, None, [-1, 1]]
+            xlabels = [None, None, None, None, None]
+            ylabels = ['Price', 'Price', 'Price', 'Price', 'Coefficient']
+            tick_labels = [[], prices[1]['time'], [], ticks[1]['time'], times]
+            mtick_fmts = [None, self.__tick_fmt_date, None, self.__tick_fmt_time, self.__tick_fmt_time]
+            mtick_rot = [0, 45, 0, 45, 45]
+            xdata = [prices[0]['time'], prices[1]['time'], ticks[0]['time'], ticks[1]['time'], times]
+            ydata = [prices[0]['close'], prices[1]['close'], ticks[0]['ask'], ticks[1]['ask'], coefficients]
+
+            # Draw 5 charts
+            for index in range(0, len(self.__axes)):
+                # Titles and axis labels
+                self.__axes[index].set_title(titles[index])
+                self.__axes[index].set_xlabel(xlabels[index])
+                self.__axes[index].set_ylabel(ylabels[index])
+
+                # Limits
+                if xlims[index] is not None:
+                    self.__axes[index].set_xlim(xlims[index])
+
+                if ylims[index] is not None:
+                    self.__axes[index].set_ylim(ylims[index])
+
+                # Tick labels and formats
+                self.__axes[index].xaxis.set_ticklabels(tick_labels[index])
+                if mtick_fmts[index] is not None:
+                    self.__axes[index].xaxis.set_major_formatter(mtick_fmts[index])
+                plt.setp(self.__axes[index].xaxis.get_majorticklabels(), rotation=mtick_rot[index])
+
+                # Plot
+                self.__axes[index].plot(xdata[index], ydata[index])
 
             # Layout with padding between charts
             self.__fig.tight_layout(pad=0.5)

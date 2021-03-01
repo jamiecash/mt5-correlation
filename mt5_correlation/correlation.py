@@ -7,7 +7,6 @@ import sched
 import threading
 import pytz
 from scipy.stats.stats import pearsonr
-import yaml
 import pickle
 
 from mt5_correlation.mt5 import MT5
@@ -36,8 +35,9 @@ class Correlation:
     coefficient_data = None
     coefficient_history = None
 
-    # Cache for ticks. Dict: {Symbol: [retrieved datetime, ticks dataframe]}
-    __ticks = {}
+    # Stores tick data used to calculate coefficient during Monitor.
+    # Dict: {Symbol: [retrieved datetime, ticks dataframe]}
+    __monitor_tick_data = {}
 
     def __init__(self):
         # Logger
@@ -62,37 +62,34 @@ class Correlation:
         else:
             return None
 
-    def load(self, filename, price_data_filename=None):
+    def load(self, filename):
         """
-        Loads a csv file containing calculated coefficients, and optionally the price data used to calculate those
+        Loads calculated coefficients, price data used to calculate them and tick data used during monitoring.
         coefficients
         :param filename: The filename for the coefficient data to load.
-        :param price_data_filename: The filename for the price data to load.
         :return:
         """
-        # Load coefficients file
-        self.coefficient_data = pd.read_csv(filename)
+        # Load data
+        with open(filename, 'rb') as file:
+            loaded_dict = pickle.load(file)
 
-        # If specified, load price data yaml file
-        if price_data_filename is not None:
-            self.__price_data = {}  # Clear
-            with open(price_data_filename, 'rb') as file:
-                self.__price_data = pickle.load(file)
+        # Get data from loaded dict and save
+        self.coefficient_data = loaded_dict["coefficient_data"]
+        self.__price_data = loaded_dict["price_data"]
+        self.__monitor_tick_data = loaded_dict["monitor_tick_data"]
+        self.coefficient_history = loaded_dict["coefficient_history"]
 
-    def save(self, filename, price_data_filename=None):
+    def save(self, filename):
         """
-        Saves the calculated coefficients as a csv file
-        :param filename: The filename for the coefficient data to save to.
-        :param price_data_filename: The filename for the price data to save to.
+        Saves the calculated coefficients, the price data used to calculate and the tick data for monitoring to a file.
+        :param filename: The filename to save the data to.
         :return:
         """
-        # Save the coefficient data
-        self.coefficient_data.to_csv(filename, index=False)
-
-        # Save the price data if required
-        if price_data_filename is not None:
-            with open(price_data_filename, 'wb') as file:
-                pickle.dump(self.__price_data, file, protocol=pickle.HIGHEST_PROTOCOL)
+        # Add data to dict then use pickle to save
+        save_dict = {"coefficient_data": self.coefficient_data, "price_data": self.__price_data,
+                     "monitor_tick_data": self.__monitor_tick_data, "coefficient_history": self.coefficient_history}
+        with open(filename, 'wb') as file:
+            pickle.dump(save_dict, file, protocol=pickle.HIGHEST_PROTOCOL)
 
     def calculate(self, date_from, date_to, timeframe, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
                   max_p_value=0.05):
@@ -196,7 +193,7 @@ class Correlation:
         return price_data
 
     def start_monitor(self, interval, from_mins, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
-                      max_p_value=0.05, cache_time=10):
+                      max_p_value=0.05, cache_time=10, autosave=False, filename='autosave.cpd'):
         """
         Starts monitor to continuously update the coefficient for all symbol pairs in that meet the min_coefficient
         threshold.
@@ -211,6 +208,9 @@ class Correlation:
         :param max_p_value: The maximum p value for the correlation to be meaningful
         :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
             the tick data. Number of seconds to cache tick data for before it becomes stale.
+        :param autosave: Whether to autosave after every monitor run. If there is no filename specified then will
+            create one named autosave.cpd
+        :param filename: Filename for autosave. Default is autosave.cpd.
 
         :return: correlation coefficient, or None if coefficient could not be calculated.
         """
@@ -228,7 +228,8 @@ class Correlation:
         # to stop and restart the monitor. Note, this happens during calculate
         self.__monitoring_params = {'interval': interval, 'from_mins': from_mins,
                                     'min_prices': min_prices, 'max_set_size_diff_pct': max_set_size_diff_pct,
-                                    'overlap_pct': overlap_pct, 'max_p_value': max_p_value, 'cache_time': cache_time}
+                                    'overlap_pct': overlap_pct, 'max_p_value': max_p_value, 'cache_time': cache_time,
+                                    'autosave': autosave, 'filename': filename}
         thread = threading.Thread(target=self.__monitor, kwargs=self.__monitoring_params)
         thread.start()
 
@@ -312,8 +313,45 @@ class Correlation:
                                            (self.coefficient_history['Symbol 2'] == symbol2)]
         return history
 
+    def get_ticks(self, symbol, date_from=None, date_to=None, cache_time=0, cache_only=False):
+        """
+        Returns the ticks for the specified symbol. Get's from cache if available and not older than cache_timeframe.
+
+        :param symbol: Name of symbol to get ticks for.
+        :param date_from: Date to get ticks from. Can only be None if getting from cache (cache_only=True)
+        :param date_to:Date to get ticks to. Can only be None if getting from cache (cache_only=True)
+        :param cache_time: Number of seconds before cached data is stale. If > than this number of seconds has elapsed,
+            get data from source and refresh cache.
+        :param cache_only: Only retrieve from cache. cache_time is ignored. Returns None if symbol is not available in
+            cache.
+
+        :return:
+        """
+
+        timezone = pytz.timezone("Etc/UTC")
+        utc_now = datetime.now(tz=timezone)
+
+        ticks = None
+
+        # Cache only
+        if cache_only:
+            if symbol in self.__monitor_tick_data:
+                ticks = self.__monitor_tick_data[symbol][1]
+        # Check if we already have it and it is not stale
+        elif symbol in self.__monitor_tick_data and utc_now < \
+                self.__monitor_tick_data[symbol][0] + timedelta(seconds=cache_time):
+            # Cached ticks are not stale. Get them
+            ticks = self.__monitor_tick_data[symbol][1]
+            self.__log.debug(f"Ticks for {symbol} retrieved from cache.")
+        else:
+            # Data does not exist in cache or cached data is stale. Retrieve from source and cache.
+            ticks = self.__mt5.get_ticks(symbol=symbol, from_date=date_from, to_date=date_to)
+            self.__monitor_tick_data[symbol] = [utc_now, ticks]
+            self.__log.debug(f"Ticks for {symbol} retrieved from source and cached.")
+        return ticks
+
     def __monitor(self, interval, from_mins, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
-                  max_p_value=0.05, cache_time=10):
+                  max_p_value=0.05, cache_time=10, autosave=False, filename='autosave.cpd'):
         """
         The actual monitor method. Private. This should not be called outside of this class. Use start_monitoring and
         stop_monitoring.
@@ -328,6 +366,9 @@ class Correlation:
         :param max_p_value: The maximum p value for the correlation to be meaningful
         :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
             the tick data. Number of seconds to cache tick data for before it becomes stale.
+        :param autosave: Whether to autosave after every monitor run. If there is no filename specified then will
+            create one named autosave.cpd
+        :param filename: Filename for autosave. Default is autosave.cpd.
 
         :return: correlation coefficient, or None if coefficient could not be calculated.
         """
@@ -340,10 +381,15 @@ class Correlation:
                                            max_set_size_diff_pct=max_set_size_diff_pct, overlap_pct=overlap_pct,
                                            max_p_value=max_p_value, cache_time=cache_time)
 
+            # Autosave
+            if autosave:
+                self.save(filename=filename)
+
             # Schedule the timer to run again
             params = {'interval': interval, 'from_mins': from_mins, 'min_prices': min_prices,
                       'max_set_size_diff_pct': max_set_size_diff_pct, 'overlap_pct': overlap_pct,
-                      'max_p_value': max_p_value, "cache_time": cache_time}
+                      'max_p_value': max_p_value, "cache_time": cache_time, 'autosave': autosave,
+                      'filename': filename}
             self.__scheduler.enter(delay=interval, priority=1, action=self.__monitor, kwargs=params)
             self.__scheduler.run()
 
@@ -374,8 +420,8 @@ class Correlation:
         date_from = date_to - timedelta(minutes=from_mins)
 
         # Get the tick data
-        symbol1ticks = self.__get_ticks(symbol=symbol1, date_from=date_from, date_to=date_to, cache_time=cache_time)
-        symbol2ticks = self.__get_ticks(symbol=symbol2, date_from=date_from, date_to=date_to, cache_time=cache_time)
+        symbol1ticks = self.get_ticks(symbol=symbol1, date_from=date_from, date_to=date_to, cache_time=cache_time)
+        symbol2ticks = self.get_ticks(symbol=symbol2, date_from=date_from, date_to=date_to, cache_time=cache_time)
 
         # Resample to 1 sec OHLC, this will help with coefficient calculation ensuring that we dont have more than one
         # tick per second and ensuring that times can match. We will need to set the index to time for the resample
@@ -414,7 +460,7 @@ class Correlation:
         return coefficient
 
     def __update_all_coefficients(self, from_mins, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
-                                  max_p_value=0.05, cache_time=10):
+                                  max_p_value=0.05, cache_time=10, autosave=False):
         """
         Updates the coefficient for all symbol pairs in that meet the min_coefficient threshold. Symbol pairs that meet
         the threshold can be accessed through the filtered_coefficient_data property.
@@ -428,6 +474,8 @@ class Correlation:
         :param max_p_value: The maximum p value for the correlation to be meaningful
         :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
             the tick data. Number of seconds to cache tick data for before it becomes stale.
+        :param autosave: Whether to autosave after every monitor run. If there is no filename set then will create one
+            named autosave.cpd
 
         :return: correlation coefficient, or None if coefficient could not be calculated.
         """
@@ -438,34 +486,6 @@ class Correlation:
             self.__update_coefficient(symbol1=symbol1, symbol2=symbol2, from_mins=from_mins,
                                       min_prices=min_prices, max_set_size_diff_pct=max_set_size_diff_pct,
                                       overlap_pct=overlap_pct, max_p_value=max_p_value, cache_time=cache_time)
-
-    def __get_ticks(self, symbol, date_from, date_to, cache_time):
-        """
-        Returns the ticks for the specified symbol. Get's from cache if available and not older than cache_timeframe.
-
-        :param symbol: Name of symbol to get ticks for.
-        :param date_from:
-        :param date_to:
-        :param cache_time: Number of seconds before cached data is stale. If > than this number of seconds has elapsed,
-            get data from source and refresh cache.
-
-        :return:
-        """
-
-        timezone = pytz.timezone("Etc/UTC")
-        utc_now = datetime.now(tz=timezone)
-
-        # Check if in cache and not stale
-        if symbol in self.__ticks and utc_now < self.__ticks[symbol][0] + timedelta(seconds=cache_time):
-            # Cached ticks are not stale. Get them
-            ticks = self.__ticks[symbol][1]
-            self.__log.debug(f"Ticks for {symbol} retrieved from cache.")
-        else:
-            # Data does not exist in cache or cached data is stale. Retrieve from source and cache.
-            ticks = self.__mt5.get_ticks(symbol=symbol, from_date=date_from, to_date=date_to)
-            self.__ticks[symbol] = [utc_now, ticks]
-            self.__log.debug(f"Ticks for {symbol} retrieved from source and cached.")
-        return ticks
 
     def __reset_coefficient_data(self):
         """
