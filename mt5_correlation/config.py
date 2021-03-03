@@ -101,9 +101,20 @@ class SettingsDialog(wx.Dialog):
     # Store any settings that have changed
     changed_settings = {}
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, parent, exclude=None):
+        """
+        Open the settings dialog
+        :param parent: The parent frame for this dialog
+        :param exclude: List of settings root nodes to exclude from this dialog
+        """
         # Super Constructor
-        wx.Dialog.__init__(self, *args, **kwargs)
+        wx.Dialog.__init__(self, parent=parent, id=wx.ID_ANY, title="Settings",
+                           pos=wx.Point(x=Config().get('settings_window.x'),
+                                        y=Config().get('settings_window.y')),
+                           size=wx.Size(width=Config().get('settings_window.width'),
+                                        height=Config().get('settings_window.height')),
+                           style=Config().get('settings_window.style'))
+
         self.SetTitle("Settings")
 
         # Create logger and get config
@@ -115,6 +126,11 @@ class SettingsDialog(wx.Dialog):
 
         # Dialog should be resizable
         self.SetWindowStyle(wx.RESIZE_BORDER)
+
+        # Settings to exclude. Just settings_window if None. Add settings_window if not specified.
+        exclude = ['settings_window'] if exclude is None else exclude
+        if 'settings_window' not in exclude:
+            exclude.append('settings_window')
 
         # We want 2 vertical sections, the tabbed notebook and the buttons. The buttons sizer will have 2 horizontal
         # sections, one for each button.
@@ -129,11 +145,13 @@ class SettingsDialog(wx.Dialog):
         root_nodes = self.__settings.get_root_nodes()
         self.__tabs = []
         for node in root_nodes:
-            # Create new tab
-            self.__tabs.append(SettingsTab(self, self.__notebook, node))
+            # Exclude?
+            if node not in exclude:
+                # Create new tab
+                self.__tabs.append(SettingsTab(self, self.__notebook, node))
 
-            # Add tab to notebook
-            self.__notebook.AddPage(self.__tabs[-1], node)
+                # Add tab to notebook
+                self.__notebook.AddPage(self.__tabs[-1], node)
 
         # Buttons
         button_ok = wx.Button(self, label="Update")
@@ -151,6 +169,9 @@ class SettingsDialog(wx.Dialog):
         button_cancel.Bind(wx.EVT_BUTTON, self.__on_cancel)
         self.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.__on_page_select)
 
+        # Bind window close event
+        self.Bind(wx.EVT_CLOSE, self.__on_close, self)
+
         # Call on_page_select to select the first page
         self.__on_page_select(event=None)
 
@@ -163,7 +184,7 @@ class SettingsDialog(wx.Dialog):
         # Clear changed settings and close
         self.changed_settings = {}
         self.EndModal(wx.ID_CANCEL)
-        self.Destroy()
+        self.Close()
 
     def __on_ok(self, event):
         # Update settings and save
@@ -197,6 +218,19 @@ class SettingsDialog(wx.Dialog):
         self.__settings.save()
         self.EndModal(wx.ID_OK)
         self.Destroy()
+
+    def __on_close(self, event):
+        # Save pos and size
+        x, y = self.GetPosition()
+        width, height = self.GetSize()
+        self.__settings.set('settings_window.x', x)
+        self.__settings.set('settings_window.y', y)
+        self.__settings.set('settings_window.width', width)
+        self.__settings.set('settings_window.height', height)
+
+        # Style
+        style = self.GetWindowStyle()
+        self.__settings.set('settings_window.style', style)
 
 
 class SettingsTab(wx.Panel):

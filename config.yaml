@@ -63,4 +63,10 @@ window:
   width: 1459
   height: 894
   style: 541072960
+settings_window:
+  x: 42
+  y: 132
+  width: 1459
+  height: 894
+  style: 524352
 ...

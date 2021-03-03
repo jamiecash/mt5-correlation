@@ -305,7 +305,7 @@ class MonitorFrame(wx.Frame):
         Opens the settings dialog
         :return:
         """
-        settings_dialog = SettingsDialog(self, size=(500, 250))
+        settings_dialog = SettingsDialog(parent=self, exclude=['window'])
         res = settings_dialog.ShowModal()
         if res == wx.ID_OK:
             # Reload relevant parts of app
