@@ -95,6 +95,9 @@ class SettingsDialog(wx.Dialog):
     box for every value.
     """
 
+    # Settings
+    __settings = None  # Will set in init.
+
     # Store any settings that have changed
     changed_settings = {}
 
@@ -170,14 +173,19 @@ class SettingsDialog(wx.Dialog):
             orig_value = self.__settings.get(setting)
             new_value = self.changed_settings[setting]
 
+            # We need to retain data type. New values will all be string as they were retrieved from textctl.
+            # Get the data type of the original and cast new to it. Note boolean needs to be handled differently as it
+            # doesn't cast directly.
+            if isinstance(orig_value, bool):
+                new_value = new_value.lower() in ['true', '1', 'yes', 't']
+            else:
+                new_value = type(orig_value)(new_value)
+
             # If they are the same, discard from changes. We will use a list of items to delete (delkeys) as we cant
             # delete whilst iterating. If they are different, update settings.
             if orig_value == new_value:
                 delkeys.append(setting)
             else:
-                # We need to retain data type. New values will all be string as they were retrieved from textctl.
-                # Get the data type of the original and cast new to it.
-                new_value = type(orig_value)(new_value)
                 self.__settings.set(setting, new_value)
 
         # Now delete the items that were the same from changed_settings. changed_settings may be used by settings
@@ -378,12 +386,12 @@ class SettingsValuePanel(wx.ScrolledWindow):
 
         # Store the parent frame and get the settings for this node.
         self.__parent_frame = parent_frame
-        settings = Config().get(node)
+        self.__settings = Config().get(node)
 
         leaf_settings = {}
-        for setting in settings:
-            if type(settings[setting]) is not dict:
-                leaf_settings[setting] = settings[setting]
+        for setting in self.__settings:
+            if type(self.__settings[setting]) is not dict:
+                leaf_settings[setting] = self.__settings[setting]
 
         # Add the value sizer for settings values.
         self.__value_sizer = wx.FlexGridSizer(rows=len(leaf_settings), cols=2, vgap=2, hgap=2)
@@ -424,7 +432,9 @@ class SettingsValuePanel(wx.ScrolledWindow):
         """
 
         def on_value_changed(event):
+            old_val = self.__settings.get(setting_path)
             self.__parent_frame.changed_settings[setting_path] = event.String
-            self.__log.debug(f"Value changed for {setting_path}.")
+            self.__log.debug(f"Value changed from {old_val} to {self.__parent_frame.changed_settings[setting_path]} "
+                             f"for {setting_path}.")
 
         return on_value_changed

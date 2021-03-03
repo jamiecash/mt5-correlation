@@ -8,6 +8,8 @@ import threading
 import pytz
 from scipy.stats.stats import pearsonr
 import pickle
+import inspect
+import sys
 
 from mt5_correlation.mt5 import MT5
 
@@ -27,6 +29,9 @@ class Correlation:
     # Toggle on whether we are monitoring or not. Set through start_monitor and stop_monitor
     __monitoring = False
     __monitoring_params = {}
+
+    # First run of scheduler
+    __first_run = True
 
     # The price data used to calculate the correlations
     __price_data = None
@@ -391,7 +396,14 @@ class Correlation:
                       'max_p_value': max_p_value, "cache_time": cache_time, 'autosave': autosave,
                       'filename': filename}
             self.__scheduler.enter(delay=interval, priority=1, action=self.__monitor, kwargs=params)
-            self.__scheduler.run()
+
+            # Log the stack. Debug stack overflow
+            self.__log.debug(f"Current stack size: {len(inspect.stack())} Recursion limit: {sys.getrecursionlimit()}")
+
+            # Run
+            if self.__first_run:
+                self.__first_run = False
+                self.__scheduler.run()
 
     def __update_coefficient(self, symbol1, symbol2, from_mins, min_prices=100, max_set_size_diff_pct=90,
                              overlap_pct=90, max_p_value=0.05, cache_time=10):
@@ -460,7 +472,7 @@ class Correlation:
         return coefficient
 
     def __update_all_coefficients(self, from_mins, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
-                                  max_p_value=0.05, cache_time=10, autosave=False):
+                                  max_p_value=0.05, cache_time=10):
         """
         Updates the coefficient for all symbol pairs in that meet the min_coefficient threshold. Symbol pairs that meet
         the threshold can be accessed through the filtered_coefficient_data property.
@@ -474,8 +486,6 @@ class Correlation:
         :param max_p_value: The maximum p value for the correlation to be meaningful
         :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
             the tick data. Number of seconds to cache tick data for before it becomes stale.
-        :param autosave: Whether to autosave after every monitor run. If there is no filename set then will create one
-            named autosave.cpd
 
         :return: correlation coefficient, or None if coefficient could not be calculated.
         """

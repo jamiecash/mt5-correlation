@@ -56,5 +56,11 @@ logging:
       - file
       propagate: 0
 developer:
-  inspection: true
+  inspection: false
+window:
+  x: 42
+  y: 132
+  width: 1459
+  height: 894
+  style: 541072960
 ...
