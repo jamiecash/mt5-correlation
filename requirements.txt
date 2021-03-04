@@ -6,3 +6,4 @@ scipy==1.6.0
 logging==0.4.9.6
 pyyaml==5.4.1
 wxpython==4.1.1
+mock==4.0.3
