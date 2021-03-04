@@ -211,11 +211,11 @@ class MonitorFrame(wx.Frame):
         # Calculate
         self.SetStatusText("Calculating coefficients.")
         self.__cor.calculate(date_from=utc_from, date_to=utc_to,
-                           timeframe=self.__config.get('calculate.timeframe'),
-                           min_prices=self.__config.get('calculate.min_prices'),
-                           max_set_size_diff_pct=self.__config.get('calculate.max_set_size_diff_pct'),
-                           overlap_pct=self.__config.get('calculate.overlap_pct'),
-                           max_p_value=self.__config.get('calculate.max_p_value'))
+                             timeframe=self.__config.get('calculate.timeframe'),
+                             min_prices=self.__config.get('calculate.min_prices'),
+                             max_set_size_diff_pct=self.__config.get('calculate.max_set_size_diff_pct'),
+                             overlap_pct=self.__config.get('calculate.overlap_pct'),
+                             max_p_value=self.__config.get('calculate.max_p_value'))
         self.SetStatusText("")
 
         # Show calculated data
@@ -313,6 +313,7 @@ class MonitorFrame(wx.Frame):
             restart_gui_timer = False
             reload_correlations = False
             reload_logger = False
+            reload_graph = False
 
             for setting in settings_dialog.changed_settings:
                 # If any 'monitor.' settings except 'monitor.divergence_threshold have changed then restart
@@ -328,15 +329,13 @@ class MonitorFrame(wx.Frame):
                     reload_correlations = True
                 if setting.startswith('logging.'):
                     reload_logger = True
+                if setting.startswith('monitor.from.'):
+                    reload_graph = True
 
             # Now perform the actions
             if restart_monitor_timer:
                 self.__log.info("Settings updated. Reloading monitoring timer.")
                 self.__cor.stop_monitor()
-                # From and to dates for calculations.
-                timezone = pytz.timezone("Etc/UTC")
-                utc_to = datetime.now(tz=timezone)
-                utc_from = utc_to - timedelta(minutes=self.__config.get('monitor.from.minutes'))
                 self.__cor.start_monitor(interval=self.__config.get('monitor.interval'),
                                          from_mins=self.__config.get('monitor.from.minutes'),
                                          min_prices=self.__config.get('monitor.min_prices'),
@@ -357,6 +356,11 @@ class MonitorFrame(wx.Frame):
                 self.__log.info("Settings updated. Reloading logger.")
                 log_config = Config().get('logging')
                 logging.config.dictConfig(log_config)
+
+            if reload_graph:
+                self.__log.info("Settings updated. Reloading graph.")
+                if len(self.__selected_correlation) == 2:
+                    self.show_graph(symbol1=self.__selected_correlation[0], symbol2=self.__selected_correlation[1])
 
     def on_close(self, event):
         """

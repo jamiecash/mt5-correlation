@@ -9,11 +9,11 @@ calculate:
   max_p_value: 0.05
 monitor:
   from:
-    minutes: 10
+    minutes: 30
   interval: 10
-  min_prices: 300
-  max_set_size_diff_pct: 50
-  overlap_pct: 50
+  min_prices: 400
+  max_set_size_diff_pct: 90
+  overlap_pct: 80
   max_p_value: 0.05
   monitoring_threshold: 0.9
   divergence_threshold: 0.8
@@ -59,14 +59,14 @@ developer:
   inspection: false
 window:
   x: 42
-  y: 132
-  width: 1459
-  height: 894
+  y: 51
+  width: 1512
+  height: 975
   style: 541072960
 settings_window:
-  x: 42
-  y: 132
-  width: 1459
-  height: 894
+  x: 354
+  y: 299
+  width: 664
+  height: 317
   style: 524352
 ...
