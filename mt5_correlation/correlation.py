@@ -255,8 +255,8 @@ class Correlation:
         """
         Calculates the correlation coefficient between two sets of price data. Uses close price.
 
-        :param symbol1_prices: Pandas dataframe containing prices or ticks for symbol 1
-        :param symbol2_prices: Pandas dataframe containing prices or ticks for symbol 2
+        :param symbol1_prices: Pandas dataframe containing prices for symbol 1
+        :param symbol2_prices: Pandas dataframe containing prices for symbol 2
         :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
             is not met then returned coefficient will be None
         :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
@@ -510,6 +510,10 @@ class Correlation:
         # Create dataframe for coefficient history
         coefficient_history_columns = ['Symbol 1', 'Symbol 2', 'Coefficient', 'UTC Date From', 'UTC Date To']
         self.coefficient_history = pd.DataFrame(columns=coefficient_history_columns)
+
+        # Clear price data and tick data
+        self.__price_data = None
+        self.__monitor_tick_data = {}
 
     def __update_coefficient_data(self, symbol1, symbol2, coefficient, date_from, date_to):
         """
