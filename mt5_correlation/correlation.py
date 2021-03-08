@@ -36,7 +36,12 @@ class Correlation:
     # The price data used to calculate the correlations
     __price_data = None
 
-    # Coefficient data and history. Will be created as dataframes in Init
+    # The shortest timeframe (which is the largest value) for calculate_from. This will be used when we update
+    # the coefficient_data dataframe. All calculations for all values specified in calculate_from will be stored in
+    # coefficient_history, however only the shortest timeframe will be updated in coefficient_data.
+    __shortest_timeframe = None
+
+    # Coefficient data and history. Will be created in init call to __reset_coefficient_data
     coefficient_data = None
     coefficient_history = None
 
@@ -179,7 +184,7 @@ class Correlation:
         # If we were monitoring, we stopped, so start again.
         if was_monitoring:
             self.start_monitor(interval=self.__monitoring_params['interval'],
-                               from_mins=self.__monitoring_params['from_mins'],
+                               calculate_from=self.__monitoring_params['calculate_from'],
                                min_prices=self.__monitoring_params['min_prices'],
                                max_set_size_diff_pct=self.__monitoring_params['max_set_size_diff_pct'],
                                overlap_pct=self.__monitoring_params['overlap_pct'],
@@ -197,14 +202,15 @@ class Correlation:
 
         return price_data
 
-    def start_monitor(self, interval, from_mins, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
-                      max_p_value=0.05, cache_time=10, autosave=False, filename='autosave.cpd'):
+    def start_monitor(self, interval, calculate_from, min_prices=100, max_set_size_diff_pct=90,
+                      overlap_pct=90, max_p_value=0.05, cache_time=10, autosave=False, filename='autosave.cpd'):
         """
         Starts monitor to continuously update the coefficient for all symbol pairs in that meet the min_coefficient
         threshold.
 
         :param interval: How often to check in seconds
-        :param from_mins: The number of minutes of tick data to use for calculations
+        :param calculate_from: The number of minutes of tick data to use for calculation. This can be a single value or
+            a list. If a list, then calculations will be performed for every from date in list.
         :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
             is not met then returned coefficient will be None
         :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
@@ -228,13 +234,19 @@ class Correlation:
         self.__log.debug(f"Starting monitor.")
         self.__monitoring = True
 
+        # Store the shortest timeframe (which is the largest value) for calculate_from. This will be used when we update
+        # the coefficient_data dataframe. All calculations for all values specified in calculate_from will be stored in
+        # coefficient_history, however only the shortest timeframe will be updated in coefficient_data.
+        self.__shortest_timeframe = min(calculate_from) if isinstance(calculate_from, list) else calculate_from
+
         # Create thread to run monitoring This will call private __monitor method that will run the calculation and
         # keep scheduling itself while self.monitoring is True. Store the params. We will need to use these if we have
         # to stop and restart the monitor. Note, this happens during calculate
-        self.__monitoring_params = {'interval': interval, 'from_mins': from_mins,
-                                    'min_prices': min_prices, 'max_set_size_diff_pct': max_set_size_diff_pct,
-                                    'overlap_pct': overlap_pct, 'max_p_value': max_p_value, 'cache_time': cache_time,
-                                    'autosave': autosave, 'filename': filename}
+        self.__monitoring_params = {'interval': interval, 'calculate_from': calculate_from,
+                                    'min_prices': min_prices,
+                                    'max_set_size_diff_pct': max_set_size_diff_pct, 'overlap_pct': overlap_pct,
+                                    'max_p_value': max_p_value, 'cache_time': cache_time, 'autosave': autosave,
+                                    'filename': filename}
         thread = threading.Thread(target=self.__monitor, kwargs=self.__monitoring_params)
         thread.start()
 
@@ -306,16 +318,23 @@ class Correlation:
 
         return coefficient
 
-    def get_coefficient_history(self, symbol1, symbol2):
+    def get_coefficient_history(self, symbol1, symbol2, timeframe=None):
         """
         Returns the coefficient history for the specified symbol pair calculated during this instance.
         Coefficient history does not persist between instances.
         :param symbol1:
         :param symbol2:
+        :param timeframe: Only return history for the specified timeframe. If None, this is ignored and all history
+            records are returned for the specified symbols
         :return: dataframe containing history of coefficient data.
         """
         history = self.coefficient_history[(self.coefficient_history['Symbol 1'] == symbol1) &
                                            (self.coefficient_history['Symbol 2'] == symbol2)]
+
+        # If calculate from was specified, filter on it.
+        if timeframe is not None:
+            history = history[(history['Timeframe'] == timeframe)]
+
         return history
 
     def get_ticks(self, symbol, date_from=None, date_to=None, cache_time=0, cache_only=False):
@@ -355,14 +374,15 @@ class Correlation:
             self.__log.debug(f"Ticks for {symbol} retrieved from source and cached.")
         return ticks
 
-    def __monitor(self, interval, from_mins, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
-                  max_p_value=0.05, cache_time=10, autosave=False, filename='autosave.cpd'):
+    def __monitor(self, interval, calculate_from, min_prices=100, max_set_size_diff_pct=90,
+                  overlap_pct=90, max_p_value=0.05, cache_time=10, autosave=False, filename='autosave.cpd'):
         """
         The actual monitor method. Private. This should not be called outside of this class. Use start_monitoring and
         stop_monitoring.
 
         :param interval: How often to check in seconds
-        :param from_mins: The number of minutes of tick data to use for calculations
+        :param calculate_from: The number of minutes of tick data to use for calculation. This can be a single value or
+            a list. If a list, then calculations will be performed for every from date in list.
         :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
             is not met then returned coefficient will be None
         :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
@@ -382,19 +402,19 @@ class Correlation:
         # Only run if monitor is not stopped
         if self.__monitoring:
             # Update all coefficients
-            self.__update_all_coefficients(from_mins=from_mins, min_prices=min_prices,
-                                           max_set_size_diff_pct=max_set_size_diff_pct, overlap_pct=overlap_pct,
-                                           max_p_value=max_p_value, cache_time=cache_time)
+            self.__update_all_coefficients(calculate_from=calculate_from,
+                                           min_prices=min_prices, max_set_size_diff_pct=max_set_size_diff_pct,
+                                           overlap_pct=overlap_pct, max_p_value=max_p_value, cache_time=cache_time)
 
             # Autosave
             if autosave:
                 self.save(filename=filename)
 
             # Schedule the timer to run again
-            params = {'interval': interval, 'from_mins': from_mins, 'min_prices': min_prices,
-                      'max_set_size_diff_pct': max_set_size_diff_pct, 'overlap_pct': overlap_pct,
-                      'max_p_value': max_p_value, "cache_time": cache_time, 'autosave': autosave,
-                      'filename': filename}
+            params = {'interval': interval, 'calculate_from': calculate_from,
+                      'min_prices': min_prices, 'max_set_size_diff_pct': max_set_size_diff_pct,
+                      'overlap_pct': overlap_pct, 'max_p_value': max_p_value, "cache_time": cache_time,
+                      'autosave': autosave, 'filename': filename}
             self.__scheduler.enter(delay=interval, priority=1, action=self.__monitor, kwargs=params)
 
             # Log the stack. Debug stack overflow
@@ -405,13 +425,14 @@ class Correlation:
                 self.__first_run = False
                 self.__scheduler.run()
 
-    def __update_coefficient(self, symbol1, symbol2, from_mins, min_prices=100, max_set_size_diff_pct=90,
-                             overlap_pct=90, max_p_value=0.05, cache_time=10):
+    def __update_coefficients(self, symbol1, symbol2, calculate_from, min_prices=100,
+                              max_set_size_diff_pct=90, overlap_pct=90, max_p_value=0.05, cache_time=10):
         """
-        Updates the coefficient for the specified symbol pair
+        Updates the long and short coefficients for the specified symbol pair
         :param symbol1: Name of symbol to calculate coefficient for.
         :param symbol2: Name of symbol to calculate coefficient for.
-        :param from_mins: The number of minutes of tick data to use for calculations
+        :param calculate_from: The number of minutes of tick data to use for calculation. This can be a single value or
+            a list. If a list, then calculations will be performed for every from date in list.
         :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
             is not met then returned coefficient will be None
         :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
@@ -423,61 +444,72 @@ class Correlation:
         :return: correlation coefficient, or None if coefficient could not be calculated.
         """
 
-        coefficient = None
+        # Convert calculate from to list of one if only one value is provided
+        if not isinstance(calculate_from, list):
+            calculate_from = [calculate_from, ]
 
         # Get dates
-        # From and to dates for calculations.
+        # From and to dates for calculations. From should be furthest away if list is provided in calculate_from
         timezone = pytz.timezone("Etc/UTC")
         date_to = datetime.now(tz=timezone)
-        date_from = date_to - timedelta(minutes=from_mins)
+        date_from = date_to - timedelta(minutes=max(calculate_from))
 
-        # Get the tick data
+        # Get the tick data for the longest timeframe calculation. We will extract shorter timeframes from it if list
+        # was provided in calculate_from to avoid retrieving multiple times.
         symbol1ticks = self.get_ticks(symbol=symbol1, date_from=date_from, date_to=date_to, cache_time=cache_time)
         symbol2ticks = self.get_ticks(symbol=symbol2, date_from=date_from, date_to=date_to, cache_time=cache_time)
 
-        # Resample to 1 sec OHLC, this will help with coefficient calculation ensuring that we dont have more than one
-        # tick per second and ensuring that times can match. We will need to set the index to time for the resample
-        # then revert back to a 'time' column. We will then need to remove rows with nan in 'close' price
-        if symbol1ticks is not None and symbol2ticks is not None and \
-                len(symbol1ticks.index) > 0 and len(symbol2ticks.index) > 0:
-            symbol1ticks = symbol1ticks.set_index('time')
-            symbol2ticks = symbol2ticks.set_index('time')
+        # Resample to 1 sec OHLC, this will help with coefficient calculation ensuring that we dont have more than
+        # one tick per second and ensuring that times can match. We will need to set the index to time for the
+        # resample then revert back to a 'time' column. We will then need to remove rows with nan in 'close' price
+        if symbol1ticks is not None and symbol2ticks is not None and len(symbol1ticks.index) > 0 and \
+                len(symbol2ticks.index) > 0:
+
             try:
-                symbol1prices = symbol1ticks['ask'].resample('1S').ohlc()
-                symbol2prices = symbol2ticks['ask'].resample('1S').ohlc()
+                symbol1ticks = symbol1ticks.set_index('time')
+                symbol2ticks = symbol2ticks.set_index('time')
+                s1_prices = symbol1ticks['ask'].resample('1S').ohlc()
+                s2_prices = symbol2ticks['ask'].resample('1S').ohlc()
             except RecursionError:
-                self.__log.warning(f"Coefficient could not be calculated for {symbol1}:{symbol2} as prices could not "
+                self.__log.warning(f"Coefficient could not be calculated for {symbol1}:{symbol2}. prices could not "
                                    f"be resampled.")
             else:
-                symbol1prices.reset_index(inplace=True)
-                symbol2prices.reset_index(inplace=True)
-                symbol1prices = symbol1prices[symbol1prices['close'].notna()]
-                symbol2prices = symbol2prices[symbol2prices['close'].notna()]
+                s1_prices.reset_index(inplace=True)
+                s2_prices.reset_index(inplace=True)
+                s1_prices = s1_prices[s1_prices['close'].notna()]
+                s2_prices = s2_prices[s2_prices['close'].notna()]
 
-                # Calculate the coefficient
-                coefficient = self.calculate_coefficient(symbol1_prices=symbol1prices, symbol2_prices=symbol2prices,
-                                                         min_prices=min_prices,
-                                                         max_set_size_diff_pct=max_set_size_diff_pct,
-                                                         overlap_pct=overlap_pct, max_p_value=max_p_value)
+                # Calculate for all timeframes
+                for from_mins in calculate_from:
+                    # Get the from date as a datetime64
+                    date_from_subset = pd.Timestamp(date_to - timedelta(minutes=from_mins)).to_datetime64()
 
-                self.__log.debug(f"Symbol pair {symbol1}:{symbol2} has a coefficient of {coefficient}.")
-        else:
-            coefficient = None
+                    # Get subset of the price data
+                    s1_prices_subset = s1_prices[(s1_prices['time'] >= date_from_subset)]
+                    s2_prices_subset = s2_prices[(s2_prices['time'] >= date_from_subset)]
 
-        # Update the coefficient data
-        if coefficient is not None:
-            self.__update_coefficient_data(symbol1=symbol1, symbol2=symbol2, coefficient=coefficient,
-                                           date_from=date_from, date_to=date_to)
+                    # Calculate the coefficient
+                    coefficient = \
+                        self.calculate_coefficient(symbol1_prices=s1_prices_subset, symbol2_prices=s2_prices_subset,
+                                                   min_prices=min_prices, max_set_size_diff_pct=max_set_size_diff_pct,
+                                                   overlap_pct=overlap_pct, max_p_value=max_p_value)
 
-        return coefficient
+                    self.__log.debug(f"Symbol pair {symbol1}:{symbol2} has a coefficient of {coefficient} for last "
+                                     f"{from_mins} minutes.")
 
-    def __update_all_coefficients(self, from_mins, min_prices=100, max_set_size_diff_pct=90, overlap_pct=90,
-                                  max_p_value=0.05, cache_time=10):
+                    # Update the coefficient data
+                    if coefficient is not None:
+                        self.__update_coefficient_data(symbol1=symbol1, symbol2=symbol2, coefficient=coefficient,
+                                                       timeframe=from_mins, date_from=date_from_subset, date_to=date_to)
+
+    def __update_all_coefficients(self, calculate_from, min_prices=100, max_set_size_diff_pct=90,
+                                  overlap_pct=90, max_p_value=0.05, cache_time=10):
         """
         Updates the coefficient for all symbol pairs in that meet the min_coefficient threshold. Symbol pairs that meet
         the threshold can be accessed through the filtered_coefficient_data property.
 
-        :param from_mins: The number of minutes of tick data to use for calculations
+        :param calculate_from: The number of minutes of tick data to use for calculation. This can be a single value or
+            a list. If a list, then calculations will be performed for every from date in list.
         :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
             is not met then returned coefficient will be None
         :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
@@ -493,36 +525,37 @@ class Correlation:
         for index, row in self.filtered_coefficient_data.iterrows():
             symbol1 = row['Symbol 1']
             symbol2 = row['Symbol 2']
-            self.__update_coefficient(symbol1=symbol1, symbol2=symbol2, from_mins=from_mins,
-                                      min_prices=min_prices, max_set_size_diff_pct=max_set_size_diff_pct,
-                                      overlap_pct=overlap_pct, max_p_value=max_p_value, cache_time=cache_time)
+            self.__update_coefficients(symbol1=symbol1, symbol2=symbol2, calculate_from=calculate_from,
+                                       min_prices=min_prices, max_set_size_diff_pct=max_set_size_diff_pct,
+                                       overlap_pct=overlap_pct, max_p_value=max_p_value, cache_time=cache_time)
 
     def __reset_coefficient_data(self):
         """
         Clears coefficient data and history.
         :return:
         """
-        # Create dataframe for coefficient data
+        # Create dataframes for coefficient data.
         coefficient_data_columns = ['Symbol 1', 'Symbol 2', 'Base Coefficient', 'UTC Date From', 'UTC Date To',
                                     'Timeframe', 'Last Check', 'Last Coefficient']
         self.coefficient_data = pd.DataFrame(columns=coefficient_data_columns)
 
-        # Create dataframe for coefficient history
-        coefficient_history_columns = ['Symbol 1', 'Symbol 2', 'Coefficient', 'UTC Date From', 'UTC Date To']
+        # Create dataframes for coefficient history.
+        coefficient_history_columns = ['Symbol 1', 'Symbol 2', 'Coefficient', 'Timeframe', 'Date From', 'Date To']
         self.coefficient_history = pd.DataFrame(columns=coefficient_history_columns)
 
         # Clear price data and tick data
         self.__price_data = None
         self.__monitor_tick_data = {}
 
-    def __update_coefficient_data(self, symbol1, symbol2, coefficient, date_from, date_to):
+    def __update_coefficient_data(self, symbol1, symbol2, coefficient, timeframe, date_from, date_to):
         """
         Updates the coefficient data with the latest coefficient and adds to coefficient history.
         :param symbol1:
         :param symbol2:
-        :param coefficient:
-        :param date_from:
-        :param date_to:
+        :param coefficient: The coefficient calculated
+        :param timeframe: The number of minutes of price data used to calculate the coefficient
+        :param date_from: The date from for which the coefficient was calculated
+        :param date_to: The date from for which the coefficient was calculated
         :return:
         """
 
@@ -531,14 +564,17 @@ class Correlation:
 
         # Update data if we have a coefficient and add to history
         if coefficient is not None:
-            self.coefficient_data.loc[(self.coefficient_data['Symbol 1'] == symbol1) &
-                                      (self.coefficient_data['Symbol 2'] == symbol2),
-                                      'Last Check'] = now
+            # The coefficient data table is only updated for the shortest calculation timeframe.
+            if timeframe == self.__shortest_timeframe:
+                self.coefficient_data.loc[(self.coefficient_data['Symbol 1'] == symbol1) &
+                                          (self.coefficient_data['Symbol 2'] == symbol2),
+                                          'Last Check'] = now
 
-            self.coefficient_data.loc[(self.coefficient_data['Symbol 1'] == symbol1) &
-                                      (self.coefficient_data['Symbol 2'] == symbol2),
-                                      'Last Coefficient'] = coefficient
+                self.coefficient_data.loc[(self.coefficient_data['Symbol 1'] == symbol1) &
+                                          (self.coefficient_data['Symbol 2'] == symbol2),
+                                          'Last Coefficient'] = coefficient
 
+            # However the history data is always updated
             row = pd.DataFrame(columns=self.coefficient_history.columns,
-                               data=[[symbol1, symbol2, coefficient, date_from, date_to]])
+                               data=[[symbol1, symbol2, coefficient, timeframe, date_from, date_to]])
             self.coefficient_history = self.coefficient_history.append(row)

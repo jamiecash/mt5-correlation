@@ -8,8 +8,11 @@ calculate:
   overlap_pct: 90
   max_p_value: 0.05
 monitor:
-  from:
-    minutes: 30
+  calculate_from:
+    long:
+      minutes: 30
+    short:
+      minutes: 10
   interval: 10
   min_prices: 400
   max_set_size_diff_pct: 90
@@ -58,8 +61,8 @@ logging:
 developer:
   inspection: false
 window:
-  x: 42
-  y: 51
+  x: 37
+  y: 42
   width: 1512
   height: 975
   style: 541072960

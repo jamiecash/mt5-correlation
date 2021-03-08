@@ -284,7 +284,8 @@ class MonitorFrame(wx.Frame):
             filename = self.__opened_filename if self.__opened_filename is not None else 'autosave.cpd'
 
             self.__cor.start_monitor(interval=self.__config.get('monitor.interval'),
-                                     from_mins=self.__config.get('monitor.from.minutes'),
+                                     calculate_from=[self.__config.get('monitor.calculate_from.long.minutes'),
+                                                     self.__config.get('monitor.calculate_from.short.minutes')],
                                      min_prices=self.__config.get('monitor.min_prices'),
                                      max_set_size_diff_pct=self.__config.get('monitor.max_set_size_diff_pct'),
                                      overlap_pct=self.__config.get('monitor.overlap_pct'),
@@ -329,7 +330,7 @@ class MonitorFrame(wx.Frame):
                     reload_correlations = True
                 if setting.startswith('logging.'):
                     reload_logger = True
-                if setting.startswith('monitor.from.'):
+                if setting.startswith('monitor.calculate_from'):
                     reload_graph = True
 
             # Now perform the actions
@@ -337,7 +338,8 @@ class MonitorFrame(wx.Frame):
                 self.__log.info("Settings updated. Reloading monitoring timer.")
                 self.__cor.stop_monitor()
                 self.__cor.start_monitor(interval=self.__config.get('monitor.interval'),
-                                         from_mins=self.__config.get('monitor.from.minutes'),
+                                         calculate_from=[self.__config.get('monitor.calculate_from.long.minutes'),
+                                                         self.__config.get('monitor.calculate_from.short.minutes')],
                                          min_prices=self.__config.get('monitor.min_prices'),
                                          max_set_size_diff_pct=self.__config.get('monitor.max_set_size_diff_pct'),
                                          overlap_pct=self.__config.get('monitor.overlap_pct'),
@@ -418,14 +420,16 @@ class MonitorFrame(wx.Frame):
         symbol_2_price_data = self.__cor.get_price_data(symbol2)
         symbol_1_ticks = self.__cor.get_ticks(symbol1, cache_only=True)
         symbol_2_ticks = self.__cor.get_ticks(symbol2, cache_only=True)
-        history_data = self.__cor.get_coefficient_history(symbol1, symbol2)
-        times = history_data['UTC Date To']
-        coefficients = history_data['Coefficient']
-
+        history_data_short = \
+            self.__cor.get_coefficient_history(symbol1, symbol2,
+                                               self.__config.get('monitor.calculate_from.short.minutes'))
+        history_data_long = \
+            self.__cor.get_coefficient_history(symbol1, symbol2,
+                                               self.__config.get('monitor.calculate_from.long.minutes'))
         # Display if we have any data
         self.__log.debug(f"Refreshing history graph {symbol1}:{symbol2}.")
-        self.__graph.draw(times=times, coefficients=coefficients, prices=[symbol_1_price_data, symbol_2_price_data],
-                          ticks=[symbol_1_ticks, symbol_2_ticks], symbols=[symbol1, symbol2])
+        self.__graph.draw(prices=[symbol_1_price_data, symbol_2_price_data], ticks=[symbol_1_ticks, symbol_2_ticks],
+                          history=[history_data_short, history_data_long], symbols=[symbol1, symbol2])
 
         # Un-hide and layout if hidden
         if not self.__graph.IsShown():
@@ -434,7 +438,7 @@ class MonitorFrame(wx.Frame):
 
     def __timer_event(self, event):
         """
-        Called on timer event. Refreshes grid and updatates selected graph.
+        Called on timer event. Refreshes grid and updates selected graph.
         :return:
         """
         self.refresh_grid()
@@ -486,7 +490,7 @@ class DataTable(wx.grid.GridTableBase):
 
         # If column is last coefficient, get value and check against threshold. Highlight if diverged.
         threshold = Config().get('monitor.divergence_threshold')
-        if col == MonitorFrame.COLUMN_LAST_COEFFICIENT:
+        if col in [MonitorFrame.COLUMN_LAST_COEFFICIENT]:
             value = self.GetValue(row, col)
             if value != "":
                 value = float(value)
@@ -531,26 +535,39 @@ class GraphPanel(wx.Panel):
         self.__axes = None
         self.__fig = None
 
-    def draw(self, times, coefficients, prices=None, symbols=None, ticks=None):
+    def draw(self, prices=None, ticks=None, history=None, symbols=None):
         """
         Plot the correlations.
-        :param times: Series of time values for x axis for coefficient history chart
-        :param coefficients: Series of coefficients values for y axis of coefficient history chart
         :param prices: Price data used to calculate base coefficient. List [Symbol1 Price Data, Symbol 2 Price Data]
-        :param symbols: Symbols. List [Symbol1, Symbol2]
         :param ticks: Ticks used to calculate last coefficient. List [Symbol1, Symbol2]
+        :param history: Coefficient history data. List of data for one or more timeframes.
+        :param symbols: Symbols. List [Symbol1, Symbol2]
         :return:
         """
+
+        # Get all plots for history. History can contain multiple plots for different timeframes. They will all be
+        # plotted on the same chart.
+        times = []
+        coefficients = []
+        for hist in history:
+            times.append(hist['Date To'])
+            coefficients.append(hist['Coefficient'])
+
         # Clear. We will need to redraw
         for ax in self.__axes:
             ax.clear()
 
         if symbols is not None and len(symbols) == 2:
             # Axis ranges
-            price_chart_date_range = [min(min(prices[0]['time']), min(prices[1]['time'])),
-                                      max(max(prices[0]['time']), max(prices[1]['time']))]
-            tick_chart_date_range = [min(min(ticks[0]['time']), min(ticks[1]['time'])),
-                                     max(max(ticks[0]['time']), max(ticks[1]['time']))]
+            default_range = [datetime.now() - timedelta(days=1), datetime.now()]
+            price_chart_date_range = default_range  # We need a default here if no data is available
+            if prices is not None and len(prices) == 0 and prices[0] is not None and prices[1] is not None:
+                price_chart_date_range = [min(min(prices[0]['time']), min(prices[1]['time'])),
+                                          max(max(prices[0]['time']), max(prices[1]['time']))]
+            tick_chart_date_range = default_range  # We need a default here if no data is available
+            if ticks is not None and len(ticks) == 0 and ticks[0] is not None and ticks[1] is not None:
+                tick_chart_date_range = [min(min(ticks[0]['time']), min(ticks[1]['time'])),
+                                         max(max(ticks[0]['time']), max(ticks[1]['time']))]
 
             # Chart config
             titles = [f"Base Coefficient Price Data for {symbols[0]}", f"Base Coefficient Price Data for {symbols[1]}",
@@ -560,7 +577,7 @@ class GraphPanel(wx.Panel):
             ylims = [None, None, None, None, [-1, 1]]
             xlabels = [None, None, None, None, None]
             ylabels = ['Price', 'Price', 'Price', 'Price', 'Coefficient']
-            tick_labels = [[], prices[1]['time'], [], ticks[1]['time'], times]
+            tick_labels = [[], prices[1]['time'], [], ticks[1]['time'], times[0]]
             mtick_fmts = [None, self.__tick_fmt_date, None, self.__tick_fmt_time, self.__tick_fmt_time]
             mtick_rot = [0, 45, 0, 45, 45]
             xdata = [prices[0]['time'], prices[1]['time'], ticks[0]['time'], ticks[1]['time'], times]
@@ -591,11 +608,15 @@ class GraphPanel(wx.Panel):
                 self.__axes[index].spines["top"].set_visible(False)
                 self.__axes[index].spines["right"].set_visible(False)
 
-                # Plot
-                if types[index] == 'plot':
-                    self.__axes[index].plot(xdata[index], ydata[index])
-                elif types[index] == 'scatter':
-                    self.__axes[index].scatter(xdata[index], ydata[index], s=1)
+                # Plot. There may be more than one set of data or each chart. Convert single data to list, then loop
+                xdata_list = xdata[index] if isinstance(xdata[index], list) else [xdata[index], ]
+                ydata_list = ydata[index] if isinstance(ydata[index], list) else [ydata[index], ]
+
+                for data_index in range(0, len(xdata_list)):
+                    if types[index] == 'plot':
+                        self.__axes[index].plot(xdata_list[data_index], ydata_list[data_index])
+                    elif types[index] == 'scatter':
+                        self.__axes[index].scatter(xdata_list[data_index], ydata_list[data_index], s=1)
 
             # Layout with padding between charts
             self.__fig.tight_layout(pad=0.5)

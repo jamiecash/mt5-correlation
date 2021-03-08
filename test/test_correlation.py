@@ -198,11 +198,11 @@ class TestCorrelation(unittest.TestCase):
         # Patch it in
         mock.copy_ticks_range.side_effect = [tick_data_s1, tick_data_s3, tick_data_s4]
 
-        # Start the monitor. Run every second. Use ~10 seconds of data. Were not testing the overlap and price data
-        # quality metrics here as that is set elsewhere so these can be set to not take effect. Set cache level high
-        # and don't use autosave. Timer runs in a separate thread so test can continue after it has started.
-        cor.start_monitor(interval=1, from_mins=0.66, min_prices=0, max_set_size_diff_pct=0, overlap_pct=0,
-                          max_p_value=1, cache_time=100, autosave=False)
+        # Start the monitor. Run every second. Use ~10 and ~5 seconds of data. Were not testing the overlap and price
+        # data quality metrics here as that is set elsewhere so these can be set to not take effect. Set cache level
+        # high and don't use autosave. Timer runs in a separate thread so test can continue after it has started.
+        cor.start_monitor(interval=1, calculate_from=[0.66, 0.33], min_prices=0, max_set_size_diff_pct=0,
+                          overlap_pct=0, max_p_value=1, cache_time=100, autosave=False)
 
         # Wait 2 seconds so timer runs twice
         time.sleep(2)
@@ -210,8 +210,12 @@ class TestCorrelation(unittest.TestCase):
         # Stop the monitor
         cor.stop_monitor()
 
-        # We should have 2 coefficients calculated for each symbol pair
-        self.assertEqual(len(cor.coefficient_history.index), 6)
+        # We should have 2 coefficients calculated for each symbol pair for each date_from value, so 12 in total.
+        self.assertEqual(len(cor.coefficient_history.index), 12)
+
+        # We should have 2 coefficients calculated for a single symbol pair and timeframe
+        self.assertEqual(len(cor.get_coefficient_history('SYMBOL1', 'SYMBOL2', 0.66)), 2,
+                         "We should have 2 history records for SYMBOL1:SYMBOL2 using the 0.66 min timeframe.")
 
     @patch('mt5_correlation.mt5.MetaTrader5')
     def test_load_and_save(self, mock):
@@ -246,8 +250,8 @@ class TestCorrelation(unittest.TestCase):
 
         # Start monitor and run for a seconds with a 1 second interval to produce some coefficient history. Then stop
         # the monitor
-        cor.start_monitor(interval=1, from_mins=0.66, min_prices=0, max_set_size_diff_pct=0, overlap_pct=0,
-                          max_p_value=1, cache_time=100, autosave=False)
+        cor.start_monitor(interval=1, calculate_from=0.66, min_prices=0, max_set_size_diff_pct=0,
+                          overlap_pct=0, max_p_value=1, cache_time=100, autosave=False)
         time.sleep(2)
         cor.stop_monitor()
 
