@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 import matplotlib.dates
 import matplotlib
+import matplotlib.ticker as mticker
 
 from mt5_correlation.correlation import Correlation
 from mt5_correlation.config import Config, SettingsDialog
@@ -53,54 +54,43 @@ class MonitorFrame(wx.Frame):
         self.__cor = Correlation()
         self.__cor.monitoring_threshold = self.__config.get("monitor.monitoring_threshold")
 
-        # Status bar
-        self.statusbar = self.CreateStatusBar(1)
+        # Status bar. 2 fields, one for monitoring status and one for general status. On open, monitoring status is not
+        # monitoring. SetBackgroundColour will change colour of both. Couldn't find a way to set on single field only.
+        self.__statusbar = self.CreateStatusBar(2)
+        self.__statusbar.SetStatusWidths([100, -1])
+        self.SetStatusText("Not Monitoring", 0)
 
-        # Menu Bar and file menu
+        # Menu Bar
         self.menubar = wx.MenuBar()
-        file_menu = wx.Menu()
 
-        # File menu items
+        # File menu and items
+        file_menu = wx.Menu()
         menu_item_open = file_menu.Append(wx.ID_ANY, "Open", "Open correlations file.")
         menu_item_save = file_menu.Append(wx.ID_ANY, "Save", "Save correlations file.")
         menu_item_saveas = file_menu.Append(wx.ID_ANY, "Save As", "Save correlations file.")
         file_menu.AppendSeparator()
-        menu_item_calculate = file_menu.Append(wx.ID_ANY, "Calculate", "Calculate base coefficients.")
-        file_menu.AppendSeparator()
         menu_item_settings = file_menu.Append(wx.ID_ANY, "Settings", "Change application settings.")
         file_menu.AppendSeparator()
         menu_item_exit = file_menu.Append(wx.ID_ANY, "Exit", "Close the application")
-
-        # Add file menu and set menu bar
         self.menubar.Append(file_menu, "File")
+
+        # Coefficient menu and items
+        coef_menu = wx.Menu()
+        menu_item_calculate = coef_menu.Append(wx.ID_ANY, "Calculate", "Calculate base coefficients.")
+        self.__menu_item_monitor = coef_menu.Append(wx.ID_ANY, "Monitor", "Monitor correlated pairs for changes to "
+                                                                          "coefficient.", kind=wx.ITEM_CHECK)
+        coef_menu.AppendSeparator()
+        menu_item_clear = coef_menu.Append(wx.ID_ANY, "Clear", "Clear coefficient and price history.")
+        self.menubar.Append(coef_menu, "Coefficient")
+
+        # Set menu bar
         self.SetMenuBar(self.menubar)
 
-        # Main window. We want 2 horizontal sections, the grid showing correlations and a graph. In the correlations
-        # section, we want 2 vertical sections, the monitor toggle and the correlations grid. For the toggle we want 2
-        # sections, a label and a toggle.
-        # ---------------------------------------------------------------
-        # |label  |  toggle       |                                      |
-        # |-----------------------|                                      |
-        # |                       |                                      |
-        # |Correlations Grid      |         Graphs                       |
-        # |                       |                                      |
-        # |                       |                                      |
-        # |                       |                                      |
-        # |                       |                                      |
-        # ----------------------------------------------------------------
+        # Main window. We want 2 horizontal sections, the grid showing correlations and a graph.
         panel = wx.Panel(self, wx.ID_ANY)
-        toggle_sizer = wx.BoxSizer(wx.HORIZONTAL)  # Label and toggle
-        correlations_sizer = wx.BoxSizer(wx.VERTICAL)  # Toggle sizer and correlations grid
+        correlations_sizer = wx.BoxSizer(wx.VERTICAL)  # Correlations grid
         self.__main_sizer = wx.BoxSizer(wx.HORIZONTAL)  # Correlations sizer and graphs panel
         panel.SetSizer(self.__main_sizer)
-
-        # Create the label and toggle, populate the toggle sizer and add the toggle sizer to the correlations sizer
-        monitor_toggle_label = wx.StaticText(panel, id=wx.ID_ANY, label="Monitoring")
-        toggle_sizer.Add(monitor_toggle_label, 0, wx.ALL, 1)
-        self.monitor_toggle = wx.ToggleButton(panel, wx.ID_ANY, label="Off")
-        self.monitor_toggle.SetBackgroundColour(wx.RED)
-        toggle_sizer.Add(self.monitor_toggle, 0, wx.ALL, 1)
-        correlations_sizer.Add(toggle_sizer, 0, wx.ALL, 1)
 
         # Create the correlations grid. This is a data table using pandas dataframe for underlying data. Add the
         # correlations_grid to the correlations sizer.
@@ -140,9 +130,6 @@ class MonitorFrame(wx.Frame):
         # Set up timer to refresh grid
         self.timer = wx.Timer(self)
 
-        # Bind monitor button
-        self.monitor_toggle.Bind(wx.EVT_TOGGLEBUTTON, self.monitor)
-
         # Bind timer
         self.Bind(wx.EVT_TIMER, self.__timer_event, self.timer)
 
@@ -152,6 +139,8 @@ class MonitorFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.save_file_as, menu_item_saveas)
         self.Bind(wx.EVT_MENU, self.calculate_coefficients, menu_item_calculate)
         self.Bind(wx.EVT_MENU, self.open_settings, menu_item_settings)
+        self.Bind(wx.EVT_MENU, self.__monitor, self.__menu_item_monitor)
+        self.Bind(wx.EVT_MENU, self.__clear_history, menu_item_clear)
         self.Bind(wx.EVT_MENU, self.quit, menu_item_exit)
 
         # Bind row select
@@ -170,23 +159,23 @@ class MonitorFrame(wx.Frame):
             # Load the file chosen by the user.
             self.__opened_filename = fileDialog.GetPath()
 
-            self.SetStatusText(f"Loading file {self.__opened_filename}.")
+            self.SetStatusText(f"Loading file {self.__opened_filename}.", 1)
             self.__cor.load(self.__opened_filename)
 
             # Refresh data in grid
             self.refresh_grid()
 
-            self.SetStatusText(f"File {self.__opened_filename} loaded.")
+            self.SetStatusText(f"File {self.__opened_filename} loaded.", 1)
 
     def save_file(self, event):
-        self.SetStatusText(f"Saving file as {self.__opened_filename}")
+        self.SetStatusText(f"Saving file as {self.__opened_filename}", 1)
 
         if self.__opened_filename is None:
             self.save_file_as(event)
         else:
             self.__cor.save(self.__opened_filename)
 
-        self.SetStatusText(f"File saved as {self.__opened_filename}")
+        self.SetStatusText(f"File saved as {self.__opened_filename}", 1)
 
     def save_file_as(self, event):
         with wx.FileDialog(self, "Save Coefficients file", wildcard="cpd (*.cpd)|*.cpd",
@@ -195,12 +184,12 @@ class MonitorFrame(wx.Frame):
                 return  # the user changed their mind
 
             # Save the file and price data file, changing opened filename so next save writes to new file
-            self.SetStatusText(f"Saving file as {self.__opened_filename}")
+            self.SetStatusText(f"Saving file as {self.__opened_filename}", 1)
 
             self.__opened_filename = fileDialog.GetPath()
             self.__cor.save(self.__opened_filename)
 
-            self.SetStatusText(f"File saved as {self.__opened_filename}")
+            self.SetStatusText(f"File saved as {self.__opened_filename}", 1)
 
     def calculate_coefficients(self, event):
         # set time zone to UTC to avoid local offset issues, and get from and to dates (a week ago to today)
@@ -209,14 +198,14 @@ class MonitorFrame(wx.Frame):
         utc_from = utc_to - timedelta(days=self.__config.get('calculate.from.days'))
 
         # Calculate
-        self.SetStatusText("Calculating coefficients.")
+        self.SetStatusText("Calculating coefficients.", 1)
         self.__cor.calculate(date_from=utc_from, date_to=utc_to,
                              timeframe=self.__config.get('calculate.timeframe'),
                              min_prices=self.__config.get('calculate.min_prices'),
                              max_set_size_diff_pct=self.__config.get('calculate.max_set_size_diff_pct'),
                              overlap_pct=self.__config.get('calculate.overlap_pct'),
                              max_p_value=self.__config.get('calculate.max_p_value'))
-        self.SetStatusText("")
+        self.SetStatusText("", 1)
 
         # Show calculated data
         self.refresh_grid()
@@ -270,13 +259,13 @@ class MonitorFrame(wx.Frame):
         # Update row count
         self.__rows = cur_rows
 
-    def monitor(self, event):
+    def __monitor(self, event):
         # Check state of toggle button. If on, then start monitoring, else stop
-        if self.monitor_toggle.GetValue():
-            self.__log.info("Starting monitoring.")
-            self.monitor_toggle.SetBackgroundColour(wx.GREEN)
-            self.monitor_toggle.SetLabelText("On")
-            self.SetStatusText("Monitoring for changes to coefficients.")
+        if self.__menu_item_monitor.IsChecked():
+            self.__log.info("Starting monitoring for changes to coefficients.")
+            self.SetStatusText("Monitoring", 0)
+            self.__statusbar.SetBackgroundColour('green')
+            self.__statusbar.Refresh()
 
             self.timer.Start(self.__config.get('monitor.interval')*1000)
 
@@ -295,9 +284,9 @@ class MonitorFrame(wx.Frame):
                                      filename=filename)
         else:
             self.__log.info("Stopping monitoring.")
-            self.monitor_toggle.SetBackgroundColour(wx.RED)
-            self.monitor_toggle.SetLabelText("Off")
-            self.SetStatusText("Monitoring stopped.")
+            self.SetStatusText("Not Monitoring", 0)
+            self.__statusbar.SetBackgroundColour('lightgray')
+            self.__statusbar.Refresh()
             self.timer.Stop()
             self.__cor.stop_monitor()
 
@@ -445,6 +434,20 @@ class MonitorFrame(wx.Frame):
         if len(self.__selected_correlation) == 2:
             self.show_graph(symbol1=self.__selected_correlation[0], symbol2=self.__selected_correlation[1])
 
+    def __clear_history(self, event):
+        """
+        Clears the calculated coefficient history and associated price data
+        :param event:
+        :return:
+        """
+        # Clear the history
+        self.__cor.clear_coefficient_history()
+
+        # Reload graph if we have a coefficient selected
+        self.__log.info("History cleared. Reloading graph.")
+        if len(self.__selected_correlation) == 2:
+            self.show_graph(symbol1=self.__selected_correlation[0], symbol2=self.__selected_correlation[1])
+
 
 class DataTable(wx.grid.GridTableBase):
     """
@@ -545,29 +548,39 @@ class GraphPanel(wx.Panel):
         :return:
         """
 
+        # Check what data we have available
+        price_data_available = prices is not None and len(prices) == 2 and \
+                               prices[0] is not None and prices[1] is not None
+        tick_data_available = ticks is not None and len(ticks) == 2 and ticks[0] is not None and ticks[1] is not None
+        history_data_available = history is not None and len(history) > 0
+        symbols_selected = symbols is not None and len(symbols) == 2
+
         # Get all plots for history. History can contain multiple plots for different timeframes. They will all be
         # plotted on the same chart.
         times = []
         coefficients = []
-        for hist in history:
-            times.append(hist['Date To'])
-            coefficients.append(hist['Coefficient'])
+        if history_data_available:
+            for hist in history:
+                times.append(hist['Date To'])
+                coefficients.append(hist['Coefficient'])
 
         # Clear. We will need to redraw
         for ax in self.__axes:
             ax.clear()
 
-        if symbols is not None and len(symbols) == 2:
+        if symbols_selected:
             # Axis ranges
-            default_range = [datetime.now() - timedelta(days=1), datetime.now()]
-            price_chart_date_range = default_range  # We need a default here if no data is available
-            if prices is not None and len(prices) == 0 and prices[0] is not None and prices[1] is not None:
+            if price_data_available:
                 price_chart_date_range = [min(min(prices[0]['time']), min(prices[1]['time'])),
                                           max(max(prices[0]['time']), max(prices[1]['time']))]
-            tick_chart_date_range = default_range  # We need a default here if no data is available
-            if ticks is not None and len(ticks) == 0 and ticks[0] is not None and ticks[1] is not None:
+            else:
+                price_chart_date_range = [datetime.now() - timedelta(days=1), datetime.now()]
+
+            if tick_data_available:
                 tick_chart_date_range = [min(min(ticks[0]['time']), min(ticks[1]['time'])),
                                          max(max(ticks[0]['time']), max(ticks[1]['time']))]
+            else:
+                tick_chart_date_range = [datetime.now() - timedelta(days=1/48), datetime.now()]
 
             # Chart config
             titles = [f"Base Coefficient Price Data for {symbols[0]}", f"Base Coefficient Price Data for {symbols[1]}",
@@ -575,14 +588,39 @@ class GraphPanel(wx.Panel):
                       f"Coefficient History for {symbols[0]}:{symbols[1]}"]
             xlims = [price_chart_date_range, price_chart_date_range, tick_chart_date_range, tick_chart_date_range, None]
             ylims = [None, None, None, None, [-1, 1]]
+
+            # Axis labels
             xlabels = [None, None, None, None, None]
             ylabels = ['Price', 'Price', 'Price', 'Price', 'Coefficient']
-            tick_labels = [[], prices[1]['time'], [], ticks[1]['time'], times[0]]
+
+            # Tick labels and formats
+            tick_labels = [[],
+                           prices[1]['time'] if price_data_available else [],
+                           [],
+                           ticks[1]['time'] if tick_data_available else [],
+                           times[0].array if history_data_available else []]
             mtick_fmts = [None, self.__tick_fmt_date, None, self.__tick_fmt_time, self.__tick_fmt_time]
             mtick_rot = [0, 45, 0, 45, 45]
-            xdata = [prices[0]['time'], prices[1]['time'], ticks[0]['time'], ticks[1]['time'], times]
-            ydata = [prices[0]['close'], prices[1]['close'], ticks[0]['ask'], ticks[1]['ask'], coefficients]
+
+            # Chart data
+            xdata = [prices[0]['time'] if price_data_available else [],
+                     prices[1]['time'] if price_data_available else [],
+                     ticks[0]['time'] if tick_data_available else [],
+                     ticks[1]['time'] if tick_data_available else [],
+                     times if history_data_available else []]
+
+            ydata = [prices[0]['close'] if price_data_available else [],
+                     prices[1]['close'] if price_data_available else [],
+                     ticks[0]['ask'] if tick_data_available else [],
+                     ticks[1]['ask'] if tick_data_available else [],
+                     coefficients if history_data_available else []]
+
+            # Chart types
             types = ['plot', 'plot', 'plot', 'plot', 'scatter']
+
+            # Legends
+            legends = [None, None, None, None, [f"{Config().get('monitor.calculate_from.short.minutes')} Minutes",
+                                                f"{Config().get('monitor.calculate_from.long.minutes')} Minutes"]]
 
             # Draw 5 charts
             for index in range(0, len(self.__axes)):
@@ -598,12 +636,6 @@ class GraphPanel(wx.Panel):
                 if ylims[index] is not None:
                     self.__axes[index].set_ylim(ylims[index])
 
-                # Tick labels and formats
-                self.__axes[index].xaxis.set_ticklabels(tick_labels[index])
-                if mtick_fmts[index] is not None:
-                    self.__axes[index].xaxis.set_major_formatter(mtick_fmts[index])
-                plt.setp(self.__axes[index].xaxis.get_majorticklabels(), rotation=mtick_rot[index])
-
                 # Remove typ and right boarders
                 self.__axes[index].spines["top"].set_visible(False)
                 self.__axes[index].spines["right"].set_visible(False)
@@ -617,6 +649,23 @@ class GraphPanel(wx.Panel):
                         self.__axes[index].plot(xdata_list[data_index], ydata_list[data_index])
                     elif types[index] == 'scatter':
                         self.__axes[index].scatter(xdata_list[data_index], ydata_list[data_index], s=1)
+
+                # Ticks, labels and formats. Fixing xticks with FixedLocator but also using MaxNLocator to avoid
+                # cramped x-labels
+                if len(tick_labels[index]) > 0:
+                    self.__axes[index].xaxis.set_major_locator(mticker.MaxNLocator(10))
+                    ticks_loc = self.__axes[index].get_xticks().tolist()
+                    self.__axes[index].xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
+                    self.__axes[index].set_xticklabels(ticks_loc)
+                    if mtick_fmts[index] is not None:
+                        self.__axes[index].xaxis.set_major_formatter(mtick_fmts[index])
+                    plt.setp(self.__axes[index].xaxis.get_majorticklabels(), rotation=mtick_rot[index])
+                else:
+                    self.__axes[index].set_xticklabels([])
+
+                # Legends
+                if legends[index] is not None:
+                    self.__axes[index].legend(legends[index])
 
             # Layout with padding between charts
             self.__fig.tight_layout(pad=0.5)

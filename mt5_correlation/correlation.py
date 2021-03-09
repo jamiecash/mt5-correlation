@@ -337,6 +337,18 @@ class Correlation:
 
         return history
 
+    def clear_coefficient_history(self):
+        """
+        Clears the coefficient history for all symbol pairs
+        :return:
+        """
+        # Create dataframes for coefficient history.
+        coefficient_history_columns = ['Symbol 1', 'Symbol 2', 'Coefficient', 'Timeframe', 'Date From', 'Date To']
+        self.coefficient_history = pd.DataFrame(columns=coefficient_history_columns)
+
+        # Clear tick data
+        self.__monitor_tick_data = {}
+
     def get_ticks(self, symbol, date_from=None, date_to=None, cache_time=0, cache_only=False):
         """
         Returns the ticks for the specified symbol. Get's from cache if available and not older than cache_timeframe.
@@ -539,13 +551,11 @@ class Correlation:
                                     'Timeframe', 'Last Check', 'Last Coefficient']
         self.coefficient_data = pd.DataFrame(columns=coefficient_data_columns)
 
-        # Create dataframes for coefficient history.
-        coefficient_history_columns = ['Symbol 1', 'Symbol 2', 'Coefficient', 'Timeframe', 'Date From', 'Date To']
-        self.coefficient_history = pd.DataFrame(columns=coefficient_history_columns)
+        # Clear coefficient history
+        self.clear_coefficient_history()
 
-        # Clear price data and tick data
+        # Clear price data
         self.__price_data = None
-        self.__monitor_tick_data = {}
 
     def __update_coefficient_data(self, symbol1, symbol2, coefficient, timeframe, date_from, date_to):
         """
