@@ -272,13 +272,13 @@ class MonitorFrame(wx.Frame):
             # Autosave filename
             filename = self.__opened_filename if self.__opened_filename is not None else 'autosave.cpd'
 
+            # Build calculation params and start monitor
+            calculation_params = [self.__config.get('monitor.calculations.long'),
+                                  self.__config.get('monitor.calculations.medium'),
+                                  self.__config.get('monitor.calculations.short')]
+
             self.__cor.start_monitor(interval=self.__config.get('monitor.interval'),
-                                     calculate_from=[self.__config.get('monitor.calculate_from.long.minutes'),
-                                                     self.__config.get('monitor.calculate_from.short.minutes')],
-                                     min_prices=self.__config.get('monitor.min_prices'),
-                                     max_set_size_diff_pct=self.__config.get('monitor.max_set_size_diff_pct'),
-                                     overlap_pct=self.__config.get('monitor.overlap_pct'),
-                                     max_p_value=self.__config.get('monitor.max_p_value'),
+                                     calculation_params=calculation_params,
                                      cache_time=self.__config.get('monitor.tick_cache_time'),
                                      autosave=self.__config.get('monitor.autosave'),
                                      filename=filename)
@@ -326,13 +326,18 @@ class MonitorFrame(wx.Frame):
             if restart_monitor_timer:
                 self.__log.info("Settings updated. Reloading monitoring timer.")
                 self.__cor.stop_monitor()
+
+                # Build calculation params and start monitor
+                calculation_params = [self.__config.get('monitor.calculations.long'),
+                                      self.__config.get('monitor.calculations.medium'),
+                                      self.__config.get('monitor.calculations.short')]
+
                 self.__cor.start_monitor(interval=self.__config.get('monitor.interval'),
-                                         calculate_from=[self.__config.get('monitor.calculate_from.long.minutes'),
-                                                         self.__config.get('monitor.calculate_from.short.minutes')],
-                                         min_prices=self.__config.get('monitor.min_prices'),
-                                         max_set_size_diff_pct=self.__config.get('monitor.max_set_size_diff_pct'),
-                                         overlap_pct=self.__config.get('monitor.overlap_pct'),
-                                         max_p_value=self.__config.get('monitor.max_p_value'))
+                                         calculation_params=calculation_params,
+                                         cache_time=self.__config.get('monitor.tick_cache_time'),
+                                         autosave=self.__config.get('monitor.autosave'),
+                                         filename=self.__opened_filename)
+
             if restart_gui_timer:
                 self.__log.info("Settings updated. Restarting gui timer.")
                 self.timer.Stop()
@@ -411,14 +416,17 @@ class MonitorFrame(wx.Frame):
         symbol_2_ticks = self.__cor.get_ticks(symbol2, cache_only=True)
         history_data_short = \
             self.__cor.get_coefficient_history(symbol1, symbol2,
-                                               self.__config.get('monitor.calculate_from.short.minutes'))
+                                               self.__config.get('monitor.calculations.short.from'))
+        history_data_med = \
+            self.__cor.get_coefficient_history(symbol1, symbol2,
+                                               self.__config.get('monitor.calculations.medium.from'))
         history_data_long = \
             self.__cor.get_coefficient_history(symbol1, symbol2,
-                                               self.__config.get('monitor.calculate_from.long.minutes'))
+                                               self.__config.get('monitor.calculations.long.from'))
         # Display if we have any data
         self.__log.debug(f"Refreshing history graph {symbol1}:{symbol2}.")
         self.__graph.draw(prices=[symbol_1_price_data, symbol_2_price_data], ticks=[symbol_1_ticks, symbol_2_ticks],
-                          history=[history_data_short, history_data_long], symbols=[symbol1, symbol2])
+                          history=[history_data_short, history_data_med, history_data_long], symbols=[symbol1, symbol2])
 
         # Un-hide and layout if hidden
         if not self.__graph.IsShown():
@@ -494,10 +502,21 @@ class DataTable(wx.grid.GridTableBase):
         # If column is last coefficient, get value and check against threshold. Highlight if diverged.
         threshold = Config().get('monitor.divergence_threshold')
         if col in [MonitorFrame.COLUMN_LAST_COEFFICIENT]:
+            # Is coefficient <= threshold
             value = self.GetValue(row, col)
             if value != "":
                 value = float(value)
                 if value <= threshold:
+                    attr.SetBackgroundColour(wx.YELLOW)
+                else:
+                    attr.SetBackgroundColour(wx.WHITE)
+        elif col in [MonitorFrame.COLUMN_LAST_CHECK]:
+            # Was the last check within the last 2 monitoring intervals
+            value = self.GetValue(row, col)
+            if value != "":
+                value = datetime.strptime(value, '%d-%m-%y %H:%M:%S')
+
+                if value >= datetime.now() - timedelta(minutes=2*Config().get('monitor.interval')):
                     attr.SetBackgroundColour(wx.YELLOW)
                 else:
                     attr.SetBackgroundColour(wx.WHITE)
@@ -550,7 +569,7 @@ class GraphPanel(wx.Panel):
 
         # Check what data we have available
         price_data_available = prices is not None and len(prices) == 2 and \
-                               prices[0] is not None and prices[1] is not None
+            prices[0] is not None and prices[1] is not None
         tick_data_available = ticks is not None and len(ticks) == 2 and ticks[0] is not None and ticks[1] is not None
         history_data_available = history is not None and len(history) > 0
         symbols_selected = symbols is not None and len(symbols) == 2
@@ -619,8 +638,9 @@ class GraphPanel(wx.Panel):
             types = ['plot', 'plot', 'plot', 'plot', 'scatter']
 
             # Legends
-            legends = [None, None, None, None, [f"{Config().get('monitor.calculate_from.short.minutes')} Minutes",
-                                                f"{Config().get('monitor.calculate_from.long.minutes')} Minutes"]]
+            legends = [None, None, None, None, [f"{Config().get('monitor.calculations.long.from')} Minutes",
+                                                f"{Config().get('monitor.calculations.medium.from')} Minutes",
+                                                f"{Config().get('monitor.calculations.short.from')} Minutes"]]
 
             # Draw 5 charts
             for index in range(0, len(self.__axes)):

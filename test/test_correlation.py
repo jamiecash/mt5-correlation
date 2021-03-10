@@ -201,8 +201,12 @@ class TestCorrelation(unittest.TestCase):
         # Start the monitor. Run every second. Use ~10 and ~5 seconds of data. Were not testing the overlap and price
         # data quality metrics here as that is set elsewhere so these can be set to not take effect. Set cache level
         # high and don't use autosave. Timer runs in a separate thread so test can continue after it has started.
-        cor.start_monitor(interval=1, calculate_from=[0.66, 0.33], min_prices=0, max_set_size_diff_pct=0,
-                          overlap_pct=0, max_p_value=1, cache_time=100, autosave=False)
+        cor.start_monitor(interval=1, calculation_params=[{'from': 0.66, 'min_prices': 0,
+                                                           'max_set_size_diff_pct': 0, 'overlap_pct':0,
+                                                           'max_p_value':1,},
+                                                          {'from': 0.33, 'min_prices': 0,
+                                                           'max_set_size_diff_pct': 0, 'overlap_pct':0,
+                                                           'max_p_value':1,}], cache_time=100, autosave=False)
 
         # Wait 2 seconds so timer runs twice
         time.sleep(2)
@@ -250,8 +254,9 @@ class TestCorrelation(unittest.TestCase):
 
         # Start monitor and run for a seconds with a 1 second interval to produce some coefficient history. Then stop
         # the monitor
-        cor.start_monitor(interval=1, calculate_from=0.66, min_prices=0, max_set_size_diff_pct=0,
-                          overlap_pct=0, max_p_value=1, cache_time=100, autosave=False)
+        cor.start_monitor(interval=1, calculation_params={'from': 0.66, 'min_prices': 0, 'max_set_size_diff_pct': 0,
+                                                          'overlap_pct': 0, 'max_p_value':1},
+                          cache_time=100, autosave=False)
         time.sleep(2)
         cor.stop_monitor()
 

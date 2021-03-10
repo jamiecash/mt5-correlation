@@ -8,16 +8,26 @@ calculate:
   overlap_pct: 90
   max_p_value: 0.05
 monitor:
-  calculate_from:
-    long:
-      minutes: 30
-    short:
-      minutes: 10
   interval: 10
-  min_prices: 400
-  max_set_size_diff_pct: 90
-  overlap_pct: 80
-  max_p_value: 0.05
+  calculations:
+    long:
+      from: 30
+      min_prices: 400
+      max_set_size_diff_pct: 90
+      overlap_pct: 80
+      max_p_value: 0.05
+    medium:
+      from: 15
+      min_prices: 300
+      max_set_size_diff_pct: 90
+      overlap_pct: 80
+      max_p_value: 0.05
+    short:
+      from: 5
+      min_prices: 50
+      max_set_size_diff_pct: 90
+      overlap_pct: 80
+      max_p_value: 0.05
   monitoring_threshold: 0.9
   divergence_threshold: 0.8
   tick_cache_time: 10

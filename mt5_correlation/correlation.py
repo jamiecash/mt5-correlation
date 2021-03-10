@@ -19,7 +19,7 @@ class Correlation:
     A class to maintain the state of the calculated correlation coefficients.
     """
 
-    # Connection to metatrader
+    # Connection to MetaTrader5
     __mt5 = None
 
     # Minimum base coefficient for monitoring. Symbol pairs with a lower correlation
@@ -28,7 +28,13 @@ class Correlation:
 
     # Toggle on whether we are monitoring or not. Set through start_monitor and stop_monitor
     __monitoring = False
-    __monitoring_params = {}
+
+    # Monitoring calculation params, interval, cache_time, autosave and filename. Passed to start_monitor
+    __monitoring_params = []
+    __interval = None
+    __cache_time = None
+    __autosave = None
+    __filename = None
 
     # First run of scheduler
     __first_run = True
@@ -53,7 +59,7 @@ class Correlation:
         # Logger
         self.__log = logging.getLogger(__name__)
 
-        # Connection to metatrader
+        # Connection to MetaTrader5
         self.__mt5 = MT5()
 
         # Create dataframe for coefficient data
@@ -113,7 +119,10 @@ class Correlation:
             is not met then returned coefficient will be None
         :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
             within this pct of each other
-        :param overlap_pct:
+        :param overlap_pct:The dates and times in the two sets of data must match. The coefficient will only be
+            calculated against the dates that overlap. Any non overlapping dates will be discarded. This setting
+            specifies the minimum size of the overlapping data when compared to the smallest set as a %. A coefficient
+            will not be calculated if this threshold is not met.
         :param max_p_value: The maximum p value for the correlation to be meaningful
 
         :return:
@@ -183,12 +192,8 @@ class Correlation:
 
         # If we were monitoring, we stopped, so start again.
         if was_monitoring:
-            self.start_monitor(interval=self.__monitoring_params['interval'],
-                               calculate_from=self.__monitoring_params['calculate_from'],
-                               min_prices=self.__monitoring_params['min_prices'],
-                               max_set_size_diff_pct=self.__monitoring_params['max_set_size_diff_pct'],
-                               overlap_pct=self.__monitoring_params['overlap_pct'],
-                               max_p_value=self.__monitoring_params['max_p_value'])
+            self.start_monitor(interval=self.__interval, calculation_params=self.__monitoring_params,
+                               cache_time=self.__cache_time, autosave=self.__autosave, filename=self.__filename)
 
     def get_price_data(self, symbol):
         """
@@ -202,21 +207,26 @@ class Correlation:
 
         return price_data
 
-    def start_monitor(self, interval, calculate_from, min_prices=100, max_set_size_diff_pct=90,
-                      overlap_pct=90, max_p_value=0.05, cache_time=10, autosave=False, filename='autosave.cpd'):
+    def start_monitor(self, interval, calculation_params, cache_time=10, autosave=False, filename='autosave.cpd'):
         """
         Starts monitor to continuously update the coefficient for all symbol pairs in that meet the min_coefficient
         threshold.
 
         :param interval: How often to check in seconds
-        :param calculate_from: The number of minutes of tick data to use for calculation. This can be a single value or
-            a list. If a list, then calculations will be performed for every from date in list.
-        :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
-            is not met then returned coefficient will be None
-        :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
-            within this pct of each other
-        :param overlap_pct:
-        :param max_p_value: The maximum p value for the correlation to be meaningful
+        :param calculation_params: A single dict or list of dicts containing the parameters for the coefficient
+            calculations. On every iteration, a coefficient will be calculated for every set of params in list. Params
+            contain the following values:
+                from: The number of minutes of tick data to use for calculation. This can be a single value or
+                    a list. If a list, then calculations will be performed for every from date in list.
+                min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
+                    is not met then returned coefficient will be None
+                max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
+                    within this pct of each other
+                overlap_pct: The dates and times in the two sets of data must match. The coefficient will only be
+                    calculated against the dates that overlap. Any non overlapping dates will be discarded. This
+                    setting specifies the minimum size of the overlapping data when compared to the smallest set as a %.
+                    A coefficient will not be calculated if this threshold is not met.
+                max_p_value: The maximum p value for the correlation to be meaningful
         :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
             the tick data. Number of seconds to cache tick data for before it becomes stale.
         :param autosave: Whether to autosave after every monitor run. If there is no filename specified then will
@@ -234,20 +244,30 @@ class Correlation:
         self.__log.debug(f"Starting monitor.")
         self.__monitoring = True
 
+        # Store the calculation params. If it isn't a list, convert to list of one to make code simpler later on.
+        self.__monitoring_params = calculation_params if isinstance(calculation_params, list) \
+            else [calculation_params, ]
+
+        # Store the other params. We will need these later if monitor is stopped and needs to be restarted. This
+        # happens in calculate.
+        self.__interval = interval
+        self.__cache_time = cache_time
+        self.__autosave = autosave
+        self.__filename = filename
+
         # Store the shortest timeframe (which is the largest value) for calculate_from. This will be used when we update
         # the coefficient_data dataframe. All calculations for all values specified in calculate_from will be stored in
         # coefficient_history, however only the shortest timeframe will be updated in coefficient_data.
-        self.__shortest_timeframe = min(calculate_from) if isinstance(calculate_from, list) else calculate_from
+        for params in self.__monitoring_params:
+            if self.__shortest_timeframe is None:
+                self.__shortest_timeframe = params['from']
+            else:
+                self.__shortest_timeframe = min(self.__shortest_timeframe, params['from'])
 
         # Create thread to run monitoring This will call private __monitor method that will run the calculation and
-        # keep scheduling itself while self.monitoring is True. Store the params. We will need to use these if we have
-        # to stop and restart the monitor. Note, this happens during calculate
-        self.__monitoring_params = {'interval': interval, 'calculate_from': calculate_from,
-                                    'min_prices': min_prices,
-                                    'max_set_size_diff_pct': max_set_size_diff_pct, 'overlap_pct': overlap_pct,
-                                    'max_p_value': max_p_value, 'cache_time': cache_time, 'autosave': autosave,
-                                    'filename': filename}
-        thread = threading.Thread(target=self.__monitor, kwargs=self.__monitoring_params)
+        # keep scheduling itself while self.monitoring is True.
+        params = {'interval': interval, "cache_time": cache_time, 'autosave': autosave, 'filename': filename}
+        thread = threading.Thread(target=self.__monitor, kwargs=params)
         thread.start()
 
     def stop_monitor(self):
@@ -386,21 +406,12 @@ class Correlation:
             self.__log.debug(f"Ticks for {symbol} retrieved from source and cached.")
         return ticks
 
-    def __monitor(self, interval, calculate_from, min_prices=100, max_set_size_diff_pct=90,
-                  overlap_pct=90, max_p_value=0.05, cache_time=10, autosave=False, filename='autosave.cpd'):
+    def __monitor(self, interval, cache_time=10, autosave=False, filename='autosave.cpd'):
         """
         The actual monitor method. Private. This should not be called outside of this class. Use start_monitoring and
         stop_monitoring.
 
         :param interval: How often to check in seconds
-        :param calculate_from: The number of minutes of tick data to use for calculation. This can be a single value or
-            a list. If a list, then calculations will be performed for every from date in list.
-        :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
-            is not met then returned coefficient will be None
-        :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
-            within this pct of each other
-        :param overlap_pct:
-        :param max_p_value: The maximum p value for the correlation to be meaningful
         :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
             the tick data. Number of seconds to cache tick data for before it becomes stale.
         :param autosave: Whether to autosave after every monitor run. If there is no filename specified then will
@@ -414,19 +425,14 @@ class Correlation:
         # Only run if monitor is not stopped
         if self.__monitoring:
             # Update all coefficients
-            self.__update_all_coefficients(calculate_from=calculate_from,
-                                           min_prices=min_prices, max_set_size_diff_pct=max_set_size_diff_pct,
-                                           overlap_pct=overlap_pct, max_p_value=max_p_value, cache_time=cache_time)
+            self.__update_all_coefficients(cache_time=cache_time)
 
             # Autosave
             if autosave:
                 self.save(filename=filename)
 
             # Schedule the timer to run again
-            params = {'interval': interval, 'calculate_from': calculate_from,
-                      'min_prices': min_prices, 'max_set_size_diff_pct': max_set_size_diff_pct,
-                      'overlap_pct': overlap_pct, 'max_p_value': max_p_value, "cache_time": cache_time,
-                      'autosave': autosave, 'filename': filename}
+            params = {'interval': interval, "cache_time": cache_time, 'autosave': autosave, 'filename': filename}
             self.__scheduler.enter(delay=interval, priority=1, action=self.__monitor, kwargs=params)
 
             # Log the stack. Debug stack overflow
@@ -437,43 +443,39 @@ class Correlation:
                 self.__first_run = False
                 self.__scheduler.run()
 
-    def __update_coefficients(self, symbol1, symbol2, calculate_from, min_prices=100,
-                              max_set_size_diff_pct=90, overlap_pct=90, max_p_value=0.05, cache_time=10):
+    def __update_coefficients(self, symbol1, symbol2, cache_time=10):
         """
         Updates the long and short coefficients for the specified symbol pair
         :param symbol1: Name of symbol to calculate coefficient for.
         :param symbol2: Name of symbol to calculate coefficient for.
-        :param calculate_from: The number of minutes of tick data to use for calculation. This can be a single value or
-            a list. If a list, then calculations will be performed for every from date in list.
-        :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
-            is not met then returned coefficient will be None
-        :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
-            within this pct of each other
-        :param overlap_pct:
-        :param max_p_value: The maximum p value for the correlation to be meaningful
         :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
             the tick data. Number of seconds to cache tick data for before it becomes stale.
         :return: correlation coefficient, or None if coefficient could not be calculated.
         """
 
-        # Convert calculate from to list of one if only one value is provided
-        if not isinstance(calculate_from, list):
-            calculate_from = [calculate_from, ]
+        # Get the largest value of from in monitoring_params. This will be used to retrieve the data. We will only
+        # retrieve once and use for every set of params by getting subset of the data.
+        max_from = None
+        for params in self.__monitoring_params:
+            if max_from is None:
+                max_from = params['from']
+            else:
+                max_from = max(max_from, params['from'])
 
-        # Get dates
-        # From and to dates for calculations. From should be furthest away if list is provided in calculate_from
+        # Date range for data
         timezone = pytz.timezone("Etc/UTC")
         date_to = datetime.now(tz=timezone)
-        date_from = date_to - timedelta(minutes=max(calculate_from))
+        date_from = date_to - timedelta(minutes=max_from)
 
-        # Get the tick data for the longest timeframe calculation. We will extract shorter timeframes from it if list
-        # was provided in calculate_from to avoid retrieving multiple times.
+        # Get the tick data for the longest timeframe calculation.
         symbol1ticks = self.get_ticks(symbol=symbol1, date_from=date_from, date_to=date_to, cache_time=cache_time)
         symbol2ticks = self.get_ticks(symbol=symbol2, date_from=date_from, date_to=date_to, cache_time=cache_time)
 
         # Resample to 1 sec OHLC, this will help with coefficient calculation ensuring that we dont have more than
         # one tick per second and ensuring that times can match. We will need to set the index to time for the
         # resample then revert back to a 'time' column. We will then need to remove rows with nan in 'close' price
+        s1_prices = None
+        s2_prices = None
         if symbol1ticks is not None and symbol2ticks is not None and len(symbol1ticks.index) > 0 and \
                 len(symbol2ticks.index) > 0:
 
@@ -491,10 +493,11 @@ class Correlation:
                 s1_prices = s1_prices[s1_prices['close'].notna()]
                 s2_prices = s2_prices[s2_prices['close'].notna()]
 
-                # Calculate for all timeframes
-                for from_mins in calculate_from:
+            # Calculate for all sets of monitoring_params
+            if s1_prices is not None and s2_prices is not None:
+                for params in self.__monitoring_params:
                     # Get the from date as a datetime64
-                    date_from_subset = pd.Timestamp(date_to - timedelta(minutes=from_mins)).to_datetime64()
+                    date_from_subset = pd.Timestamp(date_to - timedelta(minutes=params['from'])).to_datetime64()
 
                     # Get subset of the price data
                     s1_prices_subset = s1_prices[(s1_prices['time'] >= date_from_subset)]
@@ -503,43 +506,32 @@ class Correlation:
                     # Calculate the coefficient
                     coefficient = \
                         self.calculate_coefficient(symbol1_prices=s1_prices_subset, symbol2_prices=s2_prices_subset,
-                                                   min_prices=min_prices, max_set_size_diff_pct=max_set_size_diff_pct,
-                                                   overlap_pct=overlap_pct, max_p_value=max_p_value)
+                                                   min_prices=params['min_prices'],
+                                                   max_set_size_diff_pct=params['max_set_size_diff_pct'],
+                                                   overlap_pct=params['overlap_pct'], max_p_value=params['max_p_value'])
 
                     self.__log.debug(f"Symbol pair {symbol1}:{symbol2} has a coefficient of {coefficient} for last "
-                                     f"{from_mins} minutes.")
+                                     f"{params['from']} minutes.")
 
                     # Update the coefficient data
                     if coefficient is not None:
                         self.__update_coefficient_data(symbol1=symbol1, symbol2=symbol2, coefficient=coefficient,
-                                                       timeframe=from_mins, date_from=date_from_subset, date_to=date_to)
+                                                       timeframe=params['from'], date_from=date_from_subset,
+                                                       date_to=date_to)
 
-    def __update_all_coefficients(self, calculate_from, min_prices=100, max_set_size_diff_pct=90,
-                                  overlap_pct=90, max_p_value=0.05, cache_time=10):
+    def __update_all_coefficients(self, cache_time=10):
         """
         Updates the coefficient for all symbol pairs in that meet the min_coefficient threshold. Symbol pairs that meet
         the threshold can be accessed through the filtered_coefficient_data property.
 
-        :param calculate_from: The number of minutes of tick data to use for calculation. This can be a single value or
-            a list. If a list, then calculations will be performed for every from date in list.
-        :param min_prices: The minimum number of prices that should be used to calculate coefficient. If this threshold
-            is not met then returned coefficient will be None
-        :param max_set_size_diff_pct: Correlations will only be calculated if the sizes of the two price data sets are
-            within this pct of each other
-        :param overlap_pct:
-        :param max_p_value: The maximum p value for the correlation to be meaningful
         :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
             the tick data. Number of seconds to cache tick data for before it becomes stale.
-
-        :return: correlation coefficient, or None if coefficient could not be calculated.
         """
         # Update  latest coefficient for every pair
         for index, row in self.filtered_coefficient_data.iterrows():
             symbol1 = row['Symbol 1']
             symbol2 = row['Symbol 2']
-            self.__update_coefficients(symbol1=symbol1, symbol2=symbol2, calculate_from=calculate_from,
-                                       min_prices=min_prices, max_set_size_diff_pct=max_set_size_diff_pct,
-                                       overlap_pct=overlap_pct, max_p_value=max_p_value, cache_time=cache_time)
+            self.__update_coefficients(symbol1=symbol1, symbol2=symbol2, cache_time=cache_time)
 
     def __reset_coefficient_data(self):
         """
