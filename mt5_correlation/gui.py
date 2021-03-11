@@ -163,7 +163,7 @@ class MonitorFrame(wx.Frame):
             self.__cor.load(self.__opened_filename)
 
             # Refresh data in grid
-            self.refresh_grid()
+            self.__refresh_grid()
 
             self.SetStatusText(f"File {self.__opened_filename} loaded.", 1)
 
@@ -208,13 +208,13 @@ class MonitorFrame(wx.Frame):
         self.SetStatusText("", 1)
 
         # Show calculated data
-        self.refresh_grid()
+        self.__refresh_grid()
 
     def quit(self, event):
         # Close
         self.Close()
 
-    def refresh_grid(self):
+    def __refresh_grid(self):
         """
         Refreshes grid. Notifies if rows have been added or deleted.
         :return:
@@ -346,7 +346,7 @@ class MonitorFrame(wx.Frame):
             if reload_correlations:
                 self.__log.info("Settings updated. Updating monitoring threshold and reloading grid.")
                 self.__cor.monitoring_threshold = self.__config.get("monitor.monitoring_threshold")
-                self.refresh_grid()
+                self.__refresh_grid()
 
             if reload_logger:
                 self.__log.info("Settings updated. Reloading logger.")
@@ -438,7 +438,7 @@ class MonitorFrame(wx.Frame):
         Called on timer event. Refreshes grid and updates selected graph.
         :return:
         """
-        self.refresh_grid()
+        self.__refresh_grid()
         if len(self.__selected_correlation) == 2:
             self.show_graph(symbol1=self.__selected_correlation[0], symbol2=self.__selected_correlation[1])
 
@@ -455,6 +455,9 @@ class MonitorFrame(wx.Frame):
         self.__log.info("History cleared. Reloading graph.")
         if len(self.__selected_correlation) == 2:
             self.show_graph(symbol1=self.__selected_correlation[0], symbol2=self.__selected_correlation[1])
+
+        # Reload the table
+        self.__refresh_grid()
 
 
 class DataTable(wx.grid.GridTableBase):

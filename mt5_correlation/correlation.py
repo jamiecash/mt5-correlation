@@ -10,6 +10,7 @@ from scipy.stats.stats import pearsonr
 import pickle
 import inspect
 import sys
+import numpy as np
 
 from mt5_correlation.mt5 import MT5
 
@@ -368,6 +369,10 @@ class Correlation:
 
         # Clear tick data
         self.__monitor_tick_data = {}
+
+        # Clear columns from coefficient data
+        self.coefficient_data['Last Check'] = np.NaN
+        self.coefficient_data['Last Coefficient'] = np.NaN
 
     def get_ticks(self, symbol, date_from=None, date_to=None, cache_time=0, cache_only=False):
         """
