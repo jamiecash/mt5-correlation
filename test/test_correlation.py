@@ -142,8 +142,15 @@ class TestCorrelation(unittest.TestCase):
 
         # Mock the tick data to contain 2 different sets. Then get twice. They should match as the data was cached.
         mock.copy_ticks_range.side_effect = [self.mock_base_prices, self.mock_correlated_prices]
-        base_ticks = cor.get_ticks('SYMBOL1', None, None, cache_time=3)
-        cached_ticks = cor.get_ticks('SYMBOL1', None, None, cache_time=3)
+
+        # We need to start and stop the monitor as this will set the cache time
+        cor.start_monitor(interval=10, calculation_params={'from': 10, 'min_prices': 0, 'max_set_size_diff_pct': 0,
+                                                           'overlap_pct':0, 'max_p_value':1,}, cache_time=3)
+        cor.stop_monitor()
+
+        # Get the ticks within cache time and check that they match
+        base_ticks = cor.get_ticks('SYMBOL1', None, None)
+        cached_ticks = cor.get_ticks('SYMBOL1', None, None)
         self.assertTrue(base_ticks.equals(cached_ticks),
                         "Both sets of tick data should match as set 2 came from cache.")
 
@@ -151,14 +158,14 @@ class TestCorrelation(unittest.TestCase):
         time.sleep(3)
 
         # Retrieve again. This one should be different as the cache has expired.
-        non_cached_ticks = cor.get_ticks('SYMBOL1', None, None, cache_time=3)
+        non_cached_ticks = cor.get_ticks('SYMBOL1', None, None)
         self.assertTrue(not base_ticks.equals(non_cached_ticks),
                         "Both sets of tick data should differ as cached data had expired.")
 
     @patch('mt5_correlation.mt5.MetaTrader5')
     def test_start_monitor(self, mock):
         """
-        Test that starting the monitor and running for 2 seconds produces two sets of coefficint history when using an
+        Test that starting the monitor and running for 2 seconds produces two sets of coefficient history when using an
         interval of 1 second.
         :param mock:
         :return:
@@ -166,7 +173,7 @@ class TestCorrelation(unittest.TestCase):
         # Mock symbol return values
         mock.symbols_get.return_value = self.mock_symbols
 
-        # Correlation class
+        # Create correlation class
         cor = correlation.Correlation()
 
         # Calculate for price data. We should have 100% matching dates in sets. Get prices should be called 3 times.
@@ -177,6 +184,9 @@ class TestCorrelation(unittest.TestCase):
 
         cor.calculate(date_from=self.start_date, date_to=self.end_date, timeframe=5, min_prices=100,
                       max_set_size_diff_pct=100, overlap_pct=100, max_p_value=1)
+
+        # Set the monitoring threshold
+        cor.monitoring_threshold = 0.9
 
         # We will build some tick data for each symbol and patch it in. Tick data will be from 10 seconds ago to now.
         # We only need to patch in one set of tick data for each symbol as it will be cached.
@@ -202,11 +212,11 @@ class TestCorrelation(unittest.TestCase):
         # data quality metrics here as that is set elsewhere so these can be set to not take effect. Set cache level
         # high and don't use autosave. Timer runs in a separate thread so test can continue after it has started.
         cor.start_monitor(interval=1, calculation_params=[{'from': 0.66, 'min_prices': 0,
-                                                           'max_set_size_diff_pct': 0, 'overlap_pct':0,
-                                                           'max_p_value':1,},
+                                                           'max_set_size_diff_pct': 0, 'overlap_pct': 0,
+                                                           'max_p_value': 1},
                                                           {'from': 0.33, 'min_prices': 0,
-                                                           'max_set_size_diff_pct': 0, 'overlap_pct':0,
-                                                           'max_p_value':1,}], cache_time=100, autosave=False)
+                                                           'max_set_size_diff_pct': 0, 'overlap_pct': 0,
+                                                           'max_p_value': 1}], cache_time=100, autosave=False)
 
         # Wait 2 seconds so timer runs twice
         time.sleep(2)
@@ -218,8 +228,14 @@ class TestCorrelation(unittest.TestCase):
         self.assertEqual(len(cor.coefficient_history.index), 12)
 
         # We should have 2 coefficients calculated for a single symbol pair and timeframe
-        self.assertEqual(len(cor.get_coefficient_history('SYMBOL1', 'SYMBOL2', 0.66)), 2,
-                         "We should have 2 history records for SYMBOL1:SYMBOL2 using the 0.66 min timeframe.")
+        self.assertEqual(len(cor.get_coefficient_history({'Symbol 1': 'SYMBOL1', 'Symbol 2': 'SYMBOL2',
+                                                          'Timeframe': 0.66})),
+                         2, "We should have 2 history records for SYMBOL1:SYMBOL2 using the 0.66 min timeframe.")
+
+        # The status should be BELOW for SYMBOL1:SYMBOL2 and SYMBOL1:SYMBOL4. It should be ABOVE for SYMBOL2:SYMBOL4.
+        self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL2') == correlation.STATUS_BELOW_MONITORING_THRESHOLD)
+        self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL4') == correlation.STATUS_BELOW_MONITORING_THRESHOLD)
+        self.assertTrue(cor.get_last_status('SYMBOL2', 'SYMBOL4') == correlation.STATUS_ABOVE_MONITORING_THRESHOLD)
 
     @patch('mt5_correlation.mt5.MetaTrader5')
     def test_load_and_save(self, mock):
@@ -255,7 +271,7 @@ class TestCorrelation(unittest.TestCase):
         # Start monitor and run for a seconds with a 1 second interval to produce some coefficient history. Then stop
         # the monitor
         cor.start_monitor(interval=1, calculation_params={'from': 0.66, 'min_prices': 0, 'max_set_size_diff_pct': 0,
-                                                          'overlap_pct': 0, 'max_p_value':1},
+                                                          'overlap_pct': 0, 'max_p_value': 1},
                           cache_time=100, autosave=False)
         time.sleep(2)
         cor.stop_monitor()

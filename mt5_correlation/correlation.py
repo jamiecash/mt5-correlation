@@ -15,6 +15,57 @@ import numpy as np
 from mt5_correlation.mt5 import MT5
 
 
+class CorrelationStatus:
+    """
+    The status of the monitoring event for a symbol pair.
+    """
+
+    val = None
+    text = None
+    long_text = None
+
+    def __init__(self, status_val, status_text, status_long_text=None):
+        """
+        Creates a status.
+        :param status_val:
+        :param status_text:
+        :param status_long_text
+        :return:
+        """
+        self.val = status_val
+        self.text = status_text
+        self.long_text = status_long_text
+
+    def __eq__(self, other):
+        """
+        Compare the status val. We can compare against other CorrelationStatus instances or against int.
+        :param other:
+        :return:
+        """
+        if isinstance(other, self.__class__):
+            return self.val == other.val
+        elif isinstance(other, int):
+            return self.val == other
+        else:
+            return False
+
+    def __str__(self):
+        """
+        str is the text for the status.
+        :return:
+        """
+        return self.text
+
+
+# All status's for symbol pair from monitoring. Status set from assessing coefficient for all timeframes from last run.
+STATUS_NOT_CALCULATED = CorrelationStatus(-1, 'NOT CALC', 'Coefficient could not be calculated')
+STATUS_ABOVE_MONITORING_THRESHOLD = CorrelationStatus(1, 'ABOVE', 'All coefficients equal to or above the monitoring '
+                                                                  'threshold')
+STATUS_BELOW_MONITORING_THRESHOLD = CorrelationStatus(2, 'BELOW', 'All coefficients below the monitoring threshold')
+STATUS_INCONSISTENT = CorrelationStatus(3, 'INCONSISTENT', 'Coefficients not consistently above or below monitoring '
+                                                           'threshold')
+
+
 class Correlation:
     """
     A class to maintain the state of the calculated correlation coefficients.
@@ -42,11 +93,6 @@ class Correlation:
 
     # The price data used to calculate the correlations
     __price_data = None
-
-    # The shortest timeframe (which is the largest value) for calculate_from. This will be used when we update
-    # the coefficient_data dataframe. All calculations for all values specified in calculate_from will be stored in
-    # coefficient_history, however only the shortest timeframe will be updated in coefficient_data.
-    __shortest_timeframe = None
 
     # Coefficient data and history. Will be created in init call to __reset_coefficient_data
     coefficient_data = None
@@ -180,8 +226,9 @@ class Correlation:
                     self.coefficient_data = \
                         self.coefficient_data.append({'Symbol 1': symbol1, 'Symbol 2': symbol2,
                                                       'Base Coefficient': coefficient, 'UTC Date From': date_from,
-                                                      'UTC Date To': date_to, 'Timeframe': timeframe},
+                                                      'UTC Date To': date_to, 'Timeframe': timeframe, 'Status': ''},
                                                      ignore_index=True)
+
                     self.__log.debug(f"Pair {index} of {num_pair_combinations}: {symbol1}:{symbol2} has a "
                                      f"coefficient of {coefficient}.")
                 else:
@@ -256,19 +303,9 @@ class Correlation:
         self.__autosave = autosave
         self.__filename = filename
 
-        # Store the shortest timeframe (which is the largest value) for calculate_from. This will be used when we update
-        # the coefficient_data dataframe. All calculations for all values specified in calculate_from will be stored in
-        # coefficient_history, however only the shortest timeframe will be updated in coefficient_data.
-        for params in self.__monitoring_params:
-            if self.__shortest_timeframe is None:
-                self.__shortest_timeframe = params['from']
-            else:
-                self.__shortest_timeframe = min(self.__shortest_timeframe, params['from'])
-
         # Create thread to run monitoring This will call private __monitor method that will run the calculation and
         # keep scheduling itself while self.monitoring is True.
-        params = {'interval': interval, "cache_time": cache_time, 'autosave': autosave, 'filename': filename}
-        thread = threading.Thread(target=self.__monitor, kwargs=params)
+        thread = threading.Thread(target=self.__monitor)
         thread.start()
 
     def stop_monitor(self):
@@ -339,22 +376,31 @@ class Correlation:
 
         return coefficient
 
-    def get_coefficient_history(self, symbol1, symbol2, timeframe=None):
+    def get_coefficient_history(self, filters=None):
         """
-        Returns the coefficient history for the specified symbol pair calculated during this instance.
-        Coefficient history does not persist between instances.
-        :param symbol1:
-        :param symbol2:
-        :param timeframe: Only return history for the specified timeframe. If None, this is ignored and all history
-            records are returned for the specified symbols
+        Returns the coefficient history that matches the supplied filter.
+        :param filters: Dict of all filters to apply. Possible values in dict are:
+            Symbol 1
+            Symbol 2
+            Coefficient
+            Timeframe
+            Date From
+            Date To
+
+        If filter is not supplied, then all history is returned.
+
         :return: dataframe containing history of coefficient data.
         """
-        history = self.coefficient_history[(self.coefficient_history['Symbol 1'] == symbol1) &
-                                           (self.coefficient_history['Symbol 2'] == symbol2)]
+        history = self.coefficient_history
 
-        # If calculate from was specified, filter on it.
-        if timeframe is not None:
-            history = history[(history['Timeframe'] == timeframe)]
+        # Apply filters
+        if filters is not None:
+            for key in filters:
+                if key in history.columns:
+                    history = history[history[key] == filters[key]]
+                else:
+                    self.__log.warning(f"Invalid column name provided for filter. Filter column: {key} "
+                                       f"Valid columns: {history.columns}")
 
         return history
 
@@ -364,25 +410,22 @@ class Correlation:
         :return:
         """
         # Create dataframes for coefficient history.
-        coefficient_history_columns = ['Symbol 1', 'Symbol 2', 'Coefficient', 'Timeframe', 'Date From', 'Date To']
+        coefficient_history_columns = ['Symbol 1', 'Symbol 2', 'Coefficient', 'Timeframe', 'Date To']
         self.coefficient_history = pd.DataFrame(columns=coefficient_history_columns)
 
         # Clear tick data
         self.__monitor_tick_data = {}
 
-        # Clear columns from coefficient data
-        self.coefficient_data['Last Check'] = np.NaN
-        self.coefficient_data['Last Coefficient'] = np.NaN
+        # Clear status from coefficient data
+        self.coefficient_data['Status'] = ''
 
-    def get_ticks(self, symbol, date_from=None, date_to=None, cache_time=0, cache_only=False):
+    def get_ticks(self, symbol, date_from=None, date_to=None, cache_only=False):
         """
         Returns the ticks for the specified symbol. Get's from cache if available and not older than cache_timeframe.
 
         :param symbol: Name of symbol to get ticks for.
         :param date_from: Date to get ticks from. Can only be None if getting from cache (cache_only=True)
         :param date_to:Date to get ticks to. Can only be None if getting from cache (cache_only=True)
-        :param cache_time: Number of seconds before cached data is stale. If > than this number of seconds has elapsed,
-            get data from source and refresh cache.
         :param cache_only: Only retrieve from cache. cache_time is ignored. Returns None if symbol is not available in
             cache.
 
@@ -398,9 +441,9 @@ class Correlation:
         if cache_only:
             if symbol in self.__monitor_tick_data:
                 ticks = self.__monitor_tick_data[symbol][1]
-        # Check if we already have it and it is not stale
-        elif symbol in self.__monitor_tick_data and utc_now < \
-                self.__monitor_tick_data[symbol][0] + timedelta(seconds=cache_time):
+        # Check if we have a cache time defined, if we already have the tick data and it is not stale
+        elif self.__cache_time is not None and symbol in self.__monitor_tick_data and utc_now < \
+                self.__monitor_tick_data[symbol][0] + timedelta(seconds=self.__cache_time):
             # Cached ticks are not stale. Get them
             ticks = self.__monitor_tick_data[symbol][1]
             self.__log.debug(f"Ticks for {symbol} retrieved from cache.")
@@ -411,17 +454,52 @@ class Correlation:
             self.__log.debug(f"Ticks for {symbol} retrieved from source and cached.")
         return ticks
 
-    def __monitor(self, interval, cache_time=10, autosave=False, filename='autosave.cpd'):
+    def get_last_status(self, symbol1, symbol2):
+        """
+        Get the last status for the specified symbol pair.
+        :param symbol1
+        :param symbol2
+
+        :return: CorrelationStatus instance for symbol pair
+        """
+        status_col = self.coefficient_data.loc[(self.coefficient_data['Symbol 1'] == symbol1) &
+                                               (self.coefficient_data['Symbol 2'] == symbol2), 'Status']
+        status = status_col.values[0]
+        return status
+
+    def get_last_calculation(self, symbol1=None, symbol2=None):
+        """
+        Get the last calculation time the specified symbol pair. If no symbols are specified, then gets the last
+        calculation time across all pairs
+        :param symbol1
+        :param symbol2
+
+        :return: last calculation time
+        """
+        last_calc = None
+        if self.coefficient_data is not None and len(self.coefficient_data.index) > 0:
+            data = self.coefficient_data.copy()
+
+            # Filter by symols if specified
+            data = data.loc[data['Symbol 1'] == symbol1] if symbol1 is not None else data
+            data = data.loc[data['Symbol 2'] == symbol2] if symbol2 is not None else data
+
+            # Filter to remove blank dates
+            data = data.dropna(subset=['Last Calculation'])
+
+            # Get the column
+            col = data['Last Calculation']
+
+            # Get max date from column
+            if col is not None and len(col) > 0:
+                last_calc = max(col.values)
+
+        return last_calc
+
+    def __monitor(self):
         """
         The actual monitor method. Private. This should not be called outside of this class. Use start_monitoring and
         stop_monitoring.
-
-        :param interval: How often to check in seconds
-        :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
-            the tick data. Number of seconds to cache tick data for before it becomes stale.
-        :param autosave: Whether to autosave after every monitor run. If there is no filename specified then will
-            create one named autosave.cpd
-        :param filename: Filename for autosave. Default is autosave.cpd.
 
         :return: correlation coefficient, or None if coefficient could not be calculated.
         """
@@ -430,15 +508,14 @@ class Correlation:
         # Only run if monitor is not stopped
         if self.__monitoring:
             # Update all coefficients
-            self.__update_all_coefficients(cache_time=cache_time)
+            self.__update_all_coefficients()
 
             # Autosave
-            if autosave:
-                self.save(filename=filename)
+            if self.__autosave:
+                self.save(filename=self.__filename)
 
             # Schedule the timer to run again
-            params = {'interval': interval, "cache_time": cache_time, 'autosave': autosave, 'filename': filename}
-            self.__scheduler.enter(delay=interval, priority=1, action=self.__monitor, kwargs=params)
+            self.__scheduler.enter(delay=self.__interval, priority=1, action=self.__monitor)
 
             # Log the stack. Debug stack overflow
             self.__log.debug(f"Current stack size: {len(inspect.stack())} Recursion limit: {sys.getrecursionlimit()}")
@@ -448,13 +525,11 @@ class Correlation:
                 self.__first_run = False
                 self.__scheduler.run()
 
-    def __update_coefficients(self, symbol1, symbol2, cache_time=10):
+    def __update_coefficients(self, symbol1, symbol2):
         """
-        Updates the long and short coefficients for the specified symbol pair
+        Updates the coefficients for the specified symbol pair
         :param symbol1: Name of symbol to calculate coefficient for.
         :param symbol2: Name of symbol to calculate coefficient for.
-        :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
-            the tick data. Number of seconds to cache tick data for before it becomes stale.
         :return: correlation coefficient, or None if coefficient could not be calculated.
         """
 
@@ -473,8 +548,8 @@ class Correlation:
         date_from = date_to - timedelta(minutes=max_from)
 
         # Get the tick data for the longest timeframe calculation.
-        symbol1ticks = self.get_ticks(symbol=symbol1, date_from=date_from, date_to=date_to, cache_time=cache_time)
-        symbol2ticks = self.get_ticks(symbol=symbol2, date_from=date_from, date_to=date_to, cache_time=cache_time)
+        symbol1ticks = self.get_ticks(symbol=symbol1, date_from=date_from, date_to=date_to)
+        symbol2ticks = self.get_ticks(symbol=symbol2, date_from=date_from, date_to=date_to)
 
         # Resample to 1 sec OHLC, this will help with coefficient calculation ensuring that we dont have more than
         # one tick per second and ensuring that times can match. We will need to set the index to time for the
@@ -500,6 +575,7 @@ class Correlation:
 
             # Calculate for all sets of monitoring_params
             if s1_prices is not None and s2_prices is not None:
+                coefficients = {}
                 for params in self.__monitoring_params:
                     # Get the from date as a datetime64
                     date_from_subset = pd.Timestamp(date_to - timedelta(minutes=params['from'])).to_datetime64()
@@ -518,25 +594,24 @@ class Correlation:
                     self.__log.debug(f"Symbol pair {symbol1}:{symbol2} has a coefficient of {coefficient} for last "
                                      f"{params['from']} minutes.")
 
-                    # Update the coefficient data
-                    if coefficient is not None:
-                        self.__update_coefficient_data(symbol1=symbol1, symbol2=symbol2, coefficient=coefficient,
-                                                       timeframe=params['from'], date_from=date_from_subset,
-                                                       date_to=date_to)
+                    # Add the coefficient to a dict {timeframe: coefficient}. We will update together for all for
+                    # symbol pair and time
+                    coefficients[params['from']] = coefficient
 
-    def __update_all_coefficients(self, cache_time=10):
+                # Update coefficient data for all coefficients for all timeframes for this run and symbol pair.
+                self.__update_coefficient_data(symbol1=symbol1, symbol2=symbol2, coefficients=coefficients,
+                                               date_to=date_to)
+
+    def __update_all_coefficients(self):
         """
         Updates the coefficient for all symbol pairs in that meet the min_coefficient threshold. Symbol pairs that meet
         the threshold can be accessed through the filtered_coefficient_data property.
-
-        :param cache_time: Tick data is cached so that we can check coefficients for multiple symbol pairs and reuse
-            the tick data. Number of seconds to cache tick data for before it becomes stale.
         """
         # Update  latest coefficient for every pair
         for index, row in self.filtered_coefficient_data.iterrows():
             symbol1 = row['Symbol 1']
             symbol2 = row['Symbol 2']
-            self.__update_coefficients(symbol1=symbol1, symbol2=symbol2, cache_time=cache_time)
+            self.__update_coefficients(symbol1=symbol1, symbol2=symbol2)
 
     def __reset_coefficient_data(self):
         """
@@ -545,7 +620,7 @@ class Correlation:
         """
         # Create dataframes for coefficient data.
         coefficient_data_columns = ['Symbol 1', 'Symbol 2', 'Base Coefficient', 'UTC Date From', 'UTC Date To',
-                                    'Timeframe', 'Last Check', 'Last Coefficient']
+                                    'Timeframe', 'Last Calculation', 'Status']
         self.coefficient_data = pd.DataFrame(columns=coefficient_data_columns)
 
         # Clear coefficient history
@@ -554,14 +629,12 @@ class Correlation:
         # Clear price data
         self.__price_data = None
 
-    def __update_coefficient_data(self, symbol1, symbol2, coefficient, timeframe, date_from, date_to):
+    def __update_coefficient_data(self, symbol1, symbol2, coefficients, date_to):
         """
         Updates the coefficient data with the latest coefficient and adds to coefficient history.
         :param symbol1:
         :param symbol2:
-        :param coefficient: The coefficient calculated
-        :param timeframe: The number of minutes of price data used to calculate the coefficient
-        :param date_from: The date from for which the coefficient was calculated
+        :param coefficients: Dict of all coefficients calculated for this run and symbol pair. {timeframe: coefficient}
         :param date_to: The date from for which the coefficient was calculated
         :return:
         """
@@ -570,18 +643,40 @@ class Correlation:
         now = datetime.now(tz=timezone)
 
         # Update data if we have a coefficient and add to history
-        if coefficient is not None:
-            # The coefficient data table is only updated for the shortest calculation timeframe.
-            if timeframe == self.__shortest_timeframe:
-                self.coefficient_data.loc[(self.coefficient_data['Symbol 1'] == symbol1) &
-                                          (self.coefficient_data['Symbol 2'] == symbol2),
-                                          'Last Check'] = now
+        if coefficients is not None:
+            # Update the coefficient data table with the Last Calculation time.
+            self.coefficient_data.loc[(self.coefficient_data['Symbol 1'] == symbol1) &
+                                      (self.coefficient_data['Symbol 2'] == symbol2),
+                                      'Last Calculation'] = now
 
-                self.coefficient_data.loc[(self.coefficient_data['Symbol 1'] == symbol1) &
-                                          (self.coefficient_data['Symbol 2'] == symbol2),
-                                          'Last Coefficient'] = coefficient
+            # Calculate status and update
+            status = self.__calculate_status(coefficients=coefficients)
+            self.coefficient_data.loc[(self.coefficient_data['Symbol 1'] == symbol1) &
+                                      (self.coefficient_data['Symbol 2'] == symbol2),
+                                      'Status'] = status
 
-            # However the history data is always updated
-            row = pd.DataFrame(columns=self.coefficient_history.columns,
-                               data=[[symbol1, symbol2, coefficient, timeframe, date_from, date_to]])
-            self.coefficient_history = self.coefficient_history.append(row)
+            # Update history data
+            for key in coefficients:
+                row = pd.DataFrame(columns=self.coefficient_history.columns,
+                                   data=[[symbol1, symbol2, coefficients[key], key, date_to]])
+                self.coefficient_history = self.coefficient_history.append(row)
+
+    def __calculate_status(self, coefficients):
+        """
+        Calculates the status from the supplied set of coefficients
+        :param coefficients: Dict of timeframes and coefficients {timeframe: coefficient} to calculate status from
+        :return: status
+        """
+        status = None
+        values = coefficients.values()
+
+        if None in values:
+            status = STATUS_NOT_CALCULATED
+        elif all(i >= self.monitoring_threshold for i in values):
+            status = STATUS_ABOVE_MONITORING_THRESHOLD
+        elif all(i < self.monitoring_threshold for i in values):
+            status = STATUS_BELOW_MONITORING_THRESHOLD
+        else:
+            status = STATUS_INCONSISTENT
+
+        return status

@@ -6,6 +6,7 @@ import matplotlib.dates
 import matplotlib
 import matplotlib.ticker as mticker
 
+from mt5_correlation import correlation
 from mt5_correlation.correlation import Correlation
 from mt5_correlation.config import Config, SettingsDialog
 from datetime import datetime, timedelta
@@ -34,8 +35,8 @@ class MonitorFrame(wx.Frame):
     COLUMN_DATE_FROM = 4
     COLUMN_DATE_TO = 5
     COLUMN_TIMEFRAME = 6
-    COLUMN_LAST_CHECK = 7
-    COLUMN_LAST_COEFFICIENT = 8
+    COLUMN_LAST_CALCULATION = 7
+    COLUMN_STATUS = 8
 
     def __init__(self):
         # Super
@@ -110,10 +111,10 @@ class MonitorFrame(wx.Frame):
         self.grid_correlations.SetColSize(self.COLUMN_DATE_FROM, 0)  # UTC Date From. Hide
         self.grid_correlations.SetColSize(self.COLUMN_DATE_TO, 0)  # UTC Date To. Hide
         self.grid_correlations.SetColSize(self.COLUMN_TIMEFRAME, 0)  # Timeframe. Hide.
-        self.grid_correlations.SetColSize(self.COLUMN_LAST_CHECK, 100)  # Last Check
-        self.grid_correlations.SetColSize(self.COLUMN_LAST_COEFFICIENT, 100)  # Last Coefficient
-        self.grid_correlations.SetMinSize((520, 500))
-        self.grid_correlations.SetMaxSize((520, -1))
+        self.grid_correlations.SetColSize(self.COLUMN_LAST_CALCULATION, 0)  # Last Calculation. Hide
+        self.grid_correlations.SetColSize(self.COLUMN_STATUS, 100)  # Status
+        self.grid_correlations.SetMinSize((420, 500))
+        self.grid_correlations.SetMaxSize((420, -1))
         correlations_sizer.Add(self.grid_correlations, 1, wx.ALL | wx.EXPAND, 1)
 
         # Create the charts and hide as we have no data to display yet
@@ -221,18 +222,18 @@ class MonitorFrame(wx.Frame):
         """
         self.__log.debug(f"Refreshing grid. Timer running: {self.timer.IsRunning()}")
 
+        # Get coefficient data and join to history data
+        coef_data = self.__cor.coefficient_data.copy()
+        hist_data = self.__cor.get_coefficient_history()
+
         # Update data
         self.table.data = self.__cor.coefficient_data.copy()
 
         # Format
         self.table.data.loc[:, 'Base Coefficient'] = self.table.data['Base Coefficient'].map('{:.5f}'.format)
-        self.table.data.loc[:, 'Last Check'] = pd.to_datetime(self.table.data['Last Check'], utc=True)
-        self.table.data.loc[:, 'Last Check'] = self.table.data['Last Check'].dt.strftime('%d-%m-%y %H:%M:%S')
-        self.table.data.loc[:, 'Last Coefficient'] = self.table.data['Last Coefficient'].map('{:.5f}'.format)
-
-        # Remove nans. The ones from the float column will be str nan as they have been formatted
-        self.table.data = self.table.data.fillna('')
-        self.table.data.loc[:, 'Last Coefficient'] = self.table.data['Last Coefficient'].replace('nan', '')
+        self.table.data.loc[:, 'Last Calculation'] = pd.to_datetime(self.table.data['Last Calculation'], utc=True)
+        self.table.data.loc[:, 'Last Calculation'] = \
+            self.table.data['Last Calculation'].dt.strftime('%d-%m-%y %H:%M:%S')
 
         # Start refresh
         self.grid_correlations.BeginBatch()
@@ -319,7 +320,7 @@ class MonitorFrame(wx.Frame):
                     reload_correlations = True
                 if setting.startswith('logging.'):
                     reload_logger = True
-                if setting.startswith('monitor.calculate_from'):
+                if setting.startswith('monitor.calculations'):
                     reload_graph = True
 
             # Now perform the actions
@@ -415,14 +416,14 @@ class MonitorFrame(wx.Frame):
         symbol_1_ticks = self.__cor.get_ticks(symbol1, cache_only=True)
         symbol_2_ticks = self.__cor.get_ticks(symbol2, cache_only=True)
         history_data_short = \
-            self.__cor.get_coefficient_history(symbol1, symbol2,
-                                               self.__config.get('monitor.calculations.short.from'))
+            self.__cor.get_coefficient_history({'Symbol 1': symbol1, 'Symbol 2': symbol2,
+                                                'Timeframe': self.__config.get('monitor.calculations.short.from')})
         history_data_med = \
-            self.__cor.get_coefficient_history(symbol1, symbol2,
-                                               self.__config.get('monitor.calculations.medium.from'))
+            self.__cor.get_coefficient_history({'Symbol 1': symbol1, 'Symbol 2': symbol2,
+                                                'Timeframe': self.__config.get('monitor.calculations.medium.from')})
         history_data_long = \
-            self.__cor.get_coefficient_history(symbol1, symbol2,
-                                               self.__config.get('monitor.calculations.long.from'))
+            self.__cor.get_coefficient_history({'Symbol 1': symbol1, 'Symbol 2': symbol2,
+                                                'Timeframe': self.__config.get('monitor.calculations.long.from')})
         # Display if we have any data
         self.__log.debug(f"Refreshing history graph {symbol1}:{symbol2}.")
         self.__graph.draw(prices=[symbol_1_price_data, symbol_2_price_data], ticks=[symbol_1_ticks, symbol_2_ticks],
@@ -441,6 +442,9 @@ class MonitorFrame(wx.Frame):
         self.__refresh_grid()
         if len(self.__selected_correlation) == 2:
             self.show_graph(symbol1=self.__selected_correlation[0], symbol2=self.__selected_correlation[1])
+
+        # Set status message
+        self.SetStatusText(f"Status updated at {self.__cor.get_last_calculation():%d-%b %H:%M:%S}.", 1)
 
     def __clear_history(self, event):
         """
@@ -504,22 +508,11 @@ class DataTable(wx.grid.GridTableBase):
 
         # If column is last coefficient, get value and check against threshold. Highlight if diverged.
         threshold = Config().get('monitor.divergence_threshold')
-        if col in [MonitorFrame.COLUMN_LAST_COEFFICIENT]:
-            # Is coefficient <= threshold
+        if col in [MonitorFrame.COLUMN_STATUS]:
+            # Is status one of interest
             value = self.GetValue(row, col)
             if value != "":
-                value = float(value)
-                if value <= threshold:
-                    attr.SetBackgroundColour(wx.YELLOW)
-                else:
-                    attr.SetBackgroundColour(wx.WHITE)
-        elif col in [MonitorFrame.COLUMN_LAST_CHECK]:
-            # Was the last check within the last 2 monitoring intervals
-            value = self.GetValue(row, col)
-            if value != "":
-                value = datetime.strptime(value, '%d-%m-%y %H:%M:%S')
-
-                if value >= datetime.now() - timedelta(minutes=2*Config().get('monitor.interval')):
+                if value in [correlation.STATUS_BELOW_MONITORING_THRESHOLD]:
                     attr.SetBackgroundColour(wx.YELLOW)
                 else:
                     attr.SetBackgroundColour(wx.WHITE)
