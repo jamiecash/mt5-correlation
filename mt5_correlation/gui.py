@@ -6,8 +6,7 @@ import matplotlib.dates
 import matplotlib
 import matplotlib.ticker as mticker
 
-from mt5_correlation import correlation
-from mt5_correlation.correlation import Correlation
+from mt5_correlation import correlation as cor
 from mt5_correlation.config import Config, SettingsDialog
 from datetime import datetime, timedelta
 import pytz
@@ -52,8 +51,8 @@ class MonitorFrame(wx.Frame):
         self.__config = Config()
 
         # Create correlation instance to maintain state of calculated coefficients. Set min coefficient from config
-        self.__cor = Correlation()
-        self.__cor.monitoring_threshold = self.__config.get("monitor.monitoring_threshold")
+        self.__cor = cor.Correlation(monitoring_threshold=self.__config.get("monitor.monitoring_threshold"),
+                                     divergence_threshold=self.__config.get("monitor.divergence_threshold"))
 
         # Status bar. 2 fields, one for monitoring status and one for general status. On open, monitoring status is not
         # monitoring. SetBackgroundColour will change colour of both. Couldn't find a way to set on single field only.
@@ -512,7 +511,7 @@ class DataTable(wx.grid.GridTableBase):
             # Is status one of interest
             value = self.GetValue(row, col)
             if value != "":
-                if value in [correlation.STATUS_BELOW_MONITORING_THRESHOLD]:
+                if value in [cor.STATUS_BELOW_DIVERGENCE_THRESHOLD]:
                     attr.SetBackgroundColour(wx.YELLOW)
                 else:
                     attr.SetBackgroundColour(wx.WHITE)
@@ -565,8 +564,9 @@ class GraphPanel(wx.Panel):
 
         # Check what data we have available
         price_data_available = prices is not None and len(prices) == 2 and \
-            prices[0] is not None and prices[1] is not None
-        tick_data_available = ticks is not None and len(ticks) == 2 and ticks[0] is not None and ticks[1] is not None
+            prices[0] is not None and prices[1] is not None and len(prices[0]) > 0 and len(prices[1]) > 0
+        tick_data_available = ticks is not None and len(ticks) == 2 and ticks[0] is not None and ticks[1] is not None \
+            and len(ticks[0]) > 0 and len(ticks[1]) > 0
         history_data_available = history is not None and len(history) > 0
         symbols_selected = symbols is not None and len(symbols) == 2
 

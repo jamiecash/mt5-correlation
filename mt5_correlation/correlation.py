@@ -59,10 +59,10 @@ class CorrelationStatus:
 
 # All status's for symbol pair from monitoring. Status set from assessing coefficient for all timeframes from last run.
 STATUS_NOT_CALCULATED = CorrelationStatus(-1, 'NOT CALC', 'Coefficient could not be calculated')
-STATUS_ABOVE_MONITORING_THRESHOLD = CorrelationStatus(1, 'ABOVE', 'All coefficients equal to or above the monitoring '
+STATUS_ABOVE_DIVERGENCE_THRESHOLD = CorrelationStatus(1, 'ABOVE', 'All coefficients equal to or above the divergence '
                                                                   'threshold')
-STATUS_BELOW_MONITORING_THRESHOLD = CorrelationStatus(2, 'BELOW', 'All coefficients below the monitoring threshold')
-STATUS_INCONSISTENT = CorrelationStatus(3, 'INCONSISTENT', 'Coefficients not consistently above or below monitoring '
+STATUS_BELOW_DIVERGENCE_THRESHOLD = CorrelationStatus(2, 'BELOW', 'All coefficients below the divergence threshold')
+STATUS_INCONSISTENT = CorrelationStatus(3, 'INCONSISTENT', 'Coefficients not consistently above or below divergence '
                                                            'threshold')
 
 
@@ -77,6 +77,10 @@ class Correlation:
     # Minimum base coefficient for monitoring. Symbol pairs with a lower correlation
     # coefficient than ths won't be monitored.
     monitoring_threshold = 0.9
+
+    # Threshold for divergence. Correlation coefficients that were previously above the monitoring_threshold and fall
+    # below this threshold will be considered as having diverged
+    divergence_threshold = 0.8
 
     # Toggle on whether we are monitoring or not. Set through start_monitor and stop_monitor
     __monitoring = False
@@ -102,7 +106,14 @@ class Correlation:
     # Dict: {Symbol: [retrieved datetime, ticks dataframe]}
     __monitor_tick_data = {}
 
-    def __init__(self):
+    def __init__(self, monitoring_threshold=0.9, divergence_threshold=0.8):
+        """
+        Initialises the Correlation class.
+        :param monitoring_threshold: Only correlations that are greater than or equal to this threshold will be
+            monitored.
+        :param divergence_threshold: Correlations that are being monitored and fall below this threshold are considered
+            to have diverged.
+        """
         # Logger
         self.__log = logging.getLogger(__name__)
 
@@ -114,6 +125,10 @@ class Correlation:
 
         # Create timer for continuous monitoring
         self.__scheduler = sched.scheduler(time.time, time.sleep)
+
+        # Set thresholds
+        self.monitoring_threshold = monitoring_threshold
+        self.divergence_threshold = divergence_threshold
 
     @property
     def filtered_coefficient_data(self):
@@ -672,10 +687,10 @@ class Correlation:
 
         if None in values:
             status = STATUS_NOT_CALCULATED
-        elif all(i >= self.monitoring_threshold for i in values):
-            status = STATUS_ABOVE_MONITORING_THRESHOLD
-        elif all(i < self.monitoring_threshold for i in values):
-            status = STATUS_BELOW_MONITORING_THRESHOLD
+        elif all(i >= self.divergence_threshold for i in values):
+            status = STATUS_ABOVE_DIVERGENCE_THRESHOLD
+        elif all(i < self.divergence_threshold for i in values):
+            status = STATUS_BELOW_DIVERGENCE_THRESHOLD
         else:
             status = STATUS_INCONSISTENT
 

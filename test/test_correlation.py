@@ -173,8 +173,8 @@ class TestCorrelation(unittest.TestCase):
         # Mock symbol return values
         mock.symbols_get.return_value = self.mock_symbols
 
-        # Create correlation class
-        cor = correlation.Correlation()
+        # Create correlation class. We will set a divergence threshold so that we can test status.
+        cor = correlation.Correlation(divergence_threshold=0.8)
 
         # Calculate for price data. We should have 100% matching dates in sets. Get prices should be called 3 times.
         # We dont have a SYMBOL2 as this is set as not visible. All pairs should be correlated for the purpose of this
@@ -184,9 +184,6 @@ class TestCorrelation(unittest.TestCase):
 
         cor.calculate(date_from=self.start_date, date_to=self.end_date, timeframe=5, min_prices=100,
                       max_set_size_diff_pct=100, overlap_pct=100, max_p_value=1)
-
-        # Set the monitoring threshold
-        cor.monitoring_threshold = 0.9
 
         # We will build some tick data for each symbol and patch it in. Tick data will be from 10 seconds ago to now.
         # We only need to patch in one set of tick data for each symbol as it will be cached.
@@ -232,10 +229,11 @@ class TestCorrelation(unittest.TestCase):
                                                           'Timeframe': 0.66})),
                          2, "We should have 2 history records for SYMBOL1:SYMBOL2 using the 0.66 min timeframe.")
 
-        # The status should be BELOW for SYMBOL1:SYMBOL2 and SYMBOL1:SYMBOL4. It should be ABOVE for SYMBOL2:SYMBOL4.
-        self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL2') == correlation.STATUS_BELOW_MONITORING_THRESHOLD)
-        self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL4') == correlation.STATUS_BELOW_MONITORING_THRESHOLD)
-        self.assertTrue(cor.get_last_status('SYMBOL2', 'SYMBOL4') == correlation.STATUS_ABOVE_MONITORING_THRESHOLD)
+        # The status should be BELOW for SYMBOL1:SYMBOL2, and should be ABOVE for and SYMBOL1:SYMBOL4 and
+        # SYMBOL2:SYMBOL4.
+        self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL2') == correlation.STATUS_BELOW_DIVERGENCE_THRESHOLD)
+        self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL4') == correlation.STATUS_ABOVE_DIVERGENCE_THRESHOLD)
+        self.assertTrue(cor.get_last_status('SYMBOL2', 'SYMBOL4') == correlation.STATUS_ABOVE_DIVERGENCE_THRESHOLD)
 
     @patch('mt5_correlation.mt5.MetaTrader5')
     def test_load_and_save(self, mock):

@@ -13,14 +13,14 @@ monitor:
     long:
       from: 60
       min_prices: 2000
-      max_set_size_diff_pct: 90
-      overlap_pct: 90
+      max_set_size_diff_pct: 50
+      overlap_pct: 50
       max_p_value: 0.05
     medium:
       from: 30
       min_prices: 1000
-      max_set_size_diff_pct: 90
-      overlap_pct: 90
+      max_set_size_diff_pct: 50
+      overlap_pct: 50
       max_p_value: 0.05
     short:
       from: 10
@@ -71,8 +71,8 @@ logging:
 developer:
   inspection: false
 window:
-  x: 37
-  y: 42
+  x: 24
+  y: 38
   width: 1510
   height: 956
   style: 541072960
