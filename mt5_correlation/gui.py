@@ -527,12 +527,8 @@ class GraphPanel(wx.Panel):
         # Super
         wx.Panel.__init__(self, parent)
 
-        # 3  axis, 2 price data for calculate, 2 price data for last coefficient and coefficient history.
-        # All will have axis labels and top and right boarders
-        # removed
-        self.__fig, self.__axes = plt.subplots(nrows=5, ncols=1)
-
-        # Create the canvas
+        # Fig & canvas
+        self.__fig = plt.figure()
         self.__canvas = FigureCanvas(self, -1, self.__fig)
 
         # Date format for x axes
@@ -551,8 +547,7 @@ class GraphPanel(wx.Panel):
         self.__axes = None
         self.__fig = None
 
-    def draw(self, prices=None, ticks=None, history=None, symbols=None, divergence_threshold=None,
-             monitor_inverse=False):
+    def draw(self, prices, ticks, history, symbols, divergence_threshold=None, monitor_inverse=False):
         """
         Plot the correlations.
         :param prices: Price data used to calculate base coefficient. List [Symbol1 Price Data, Symbol 2 Price Data]
@@ -582,10 +577,6 @@ class GraphPanel(wx.Panel):
                 times.append(hist['Date To'])
                 coefficients.append(hist['Coefficient'])
 
-        # Clear. We will need to redraw
-        for ax in self.__axes:
-            ax.clear()
-
         if symbols_selected:
             # Axis ranges
             if price_data_available:
@@ -600,101 +591,109 @@ class GraphPanel(wx.Panel):
             else:
                 tick_chart_date_range = [datetime.now() - timedelta(days=1/48), datetime.now()]
 
-            # Chart config
-            titles = [f"Base Coefficient Price Data for {symbols[0]}", f"Base Coefficient Price Data for {symbols[1]}",
-                      f"Coefficient Tick Data for {symbols[0]}", f"Coefficient Tick Data for {symbols[1]}",
-                      f"Coefficient History for {symbols[0]}:{symbols[1]}"]
-            xlims = [price_chart_date_range, price_chart_date_range, tick_chart_date_range, tick_chart_date_range, None]
-            ylims = [None, None, None, None, [-1, 1]]
+            # First two charts. Data used to calculate base coefficient and data used to calculate latest coefficient.
+            # Both charts will use 2 plots on a single axis and have different y ranges.
+            titles = [f"Base Coefficient Price Data for {symbols[0]}:{symbols[1]}",
+                      f"Coefficient Tick Data for {symbols[0]}:{symbols[1]}"]
+            xlims = [price_chart_date_range, tick_chart_date_range]
 
-            # Axis labels
-            xlabels = [None, None, None, None, None]
-            ylabels = ['Price', 'Price', 'Price', 'Price', 'Coefficient']
+            xdata = [[prices[0]['time'] if price_data_available else [],
+                      prices[1]['time'] if price_data_available else []],
+                     [ticks[0]['time'] if tick_data_available else [],
+                      ticks[1]['time'] if tick_data_available else []]]
 
-            # Tick labels and formats
-            tick_labels = [[],
-                           prices[1]['time'] if price_data_available else [],
-                           [],
-                           ticks[1]['time'] if tick_data_available else [],
-                           times[0].array if history_data_available else []]
-            mtick_fmts = [None, self.__tick_fmt_date, None, self.__tick_fmt_time, self.__tick_fmt_time]
-            mtick_rot = [0, 45, 0, 45, 45]
+            ydata = [[prices[0]['close'] if price_data_available else [],
+                      prices[1]['close'] if price_data_available else []],
+                     [ticks[0]['ask'] if tick_data_available else [],
+                      ticks[1]['ask'] if tick_data_available else []]]
 
-            # Chart data
-            xdata = [prices[0]['time'] if price_data_available else [],
-                     prices[1]['time'] if price_data_available else [],
-                     ticks[0]['time'] if tick_data_available else [],
-                     ticks[1]['time'] if tick_data_available else [],
-                     times if history_data_available else []]
+            tick_labels = [prices[1]['time'] if price_data_available else [],
+                           ticks[1]['time'] if tick_data_available else []]
 
-            ydata = [prices[0]['close'] if price_data_available else [],
-                     prices[1]['close'] if price_data_available else [],
-                     ticks[0]['ask'] if tick_data_available else [],
-                     ticks[1]['ask'] if tick_data_available else [],
-                     coefficients if history_data_available else []]
+            tick_formats = [self.__tick_fmt_date, self.__tick_fmt_time]
 
-            # Chart types
-            types = ['plot', 'plot', 'plot', 'plot', 'scatter']
+            # Clear the figure then redraw the 2 charts
+            self.__fig.clf()
+            for i in range(0, 2):
+                # 2 axis. One for each symbol
+                s1ax = self.__fig.add_subplot(3, 1, i+1)
+                s2ax = s1ax.twinx()
 
-            # Legends
-            legends = [None, None, None, None, [f"{Config().get('monitor.calculations.long.from')} Minutes",
-                                                f"{Config().get('monitor.calculations.medium.from')} Minutes",
-                                                f"{Config().get('monitor.calculations.short.from')} Minutes"]]
-
-            # lines
-            horiz_lines = [None, None, None, None, [divergence_threshold, divergence_threshold * -1
-                                                    if divergence_threshold is not None and monitor_inverse else None]]
-
-            # Draw 5 charts
-            for index in range(0, len(self.__axes)):
                 # Titles and axis labels
-                self.__axes[index].set_title(titles[index])
-                self.__axes[index].set_xlabel(xlabels[index])
-                self.__axes[index].set_ylabel(ylabels[index])
+                s1ax.set_title(titles[i])
+                s1ax.set_ylabel('Price')
 
-                # Limits
-                if xlims[index] is not None:
-                    self.__axes[index].set_xlim(xlims[index])
+                # X Limits
+                s1ax.set_xlim(xlims[i])
 
-                if ylims[index] is not None:
-                    self.__axes[index].set_ylim(ylims[index])
+                # Y Labels. Left for symbol1, right for symbol2
+                colors = ['green', 'blue']
+                s1ax.set_ylabel(f"{symbols[0]}", color=colors[0])
+                s2ax.set_ylabel(f"{symbols[1]}", color=colors[1])
 
-                # Remove typ and right boarders
-                self.__axes[index].spines["top"].set_visible(False)
-                self.__axes[index].spines["right"].set_visible(False)
+                # Plot both lines
+                s1ax.plot(xdata[i][0], ydata[i][0], color=colors[0])
+                s2ax.plot(xdata[i][1], ydata[i][1], color=colors[1])
 
-                # Plot. There may be more than one set of data or each chart. Convert single data to list, then loop
-                xdata_list = xdata[index] if isinstance(xdata[index], list) else [xdata[index], ]
-                ydata_list = ydata[index] if isinstance(ydata[index], list) else [ydata[index], ]
-
-                for data_index in range(0, len(xdata_list)):
-                    if types[index] == 'plot':
-                        self.__axes[index].plot(xdata_list[data_index], ydata_list[data_index])
-                    elif types[index] == 'scatter':
-                        self.__axes[index].scatter(xdata_list[data_index], ydata_list[data_index], s=1)
+                # Y tick colours
+                s1ax.tick_params(axis='y', labelcolor=colors[0])
+                s2ax.tick_params(axis='y', labelcolor=colors[1])
 
                 # Ticks, labels and formats. Fixing xticks with FixedLocator but also using MaxNLocator to avoid
                 # cramped x-labels
-                if len(tick_labels[index]) > 0:
-                    self.__axes[index].xaxis.set_major_locator(mticker.MaxNLocator(10))
-                    ticks_loc = self.__axes[index].get_xticks().tolist()
-                    self.__axes[index].xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
-                    self.__axes[index].set_xticklabels(ticks_loc)
-                    if mtick_fmts[index] is not None:
-                        self.__axes[index].xaxis.set_major_formatter(mtick_fmts[index])
-                    plt.setp(self.__axes[index].xaxis.get_majorticklabels(), rotation=mtick_rot[index])
+                if len(tick_labels[i]) > 0:
+                    s1ax.xaxis.set_major_locator(mticker.MaxNLocator(10))
+                    ticks_loc = s1ax.get_xticks().tolist()
+                    s1ax.xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
+                    s1ax.set_xticklabels(ticks_loc)
+                    if tick_formats[i] is not None:
+                        s1ax.xaxis.set_major_formatter(tick_formats[i])
+                    plt.setp(s1ax.xaxis.get_majorticklabels(), rotation=45)
                 else:
-                    self.__axes[index].set_xticklabels([])
+                    s1ax.set_xticklabels([])
 
-                # Lines
-                if horiz_lines[index] is not None and isinstance(horiz_lines[index], list):
-                    for line_pos in horiz_lines[index]:
-                        if line_pos is not None:
-                            self.__axes[index].axhline(y=line_pos, color="red", label='_nolegend_', linewidth=1)
+            # Third chart showing the coefficient history and the divergence threshold lines.
+            ax = self.__fig.add_subplot(3, 1, 3)
 
-                # Legends
-                if legends[index] is not None:
-                    self.__axes[index].legend(legends[index])
+            # Titles and axis labels
+            ax.set_title(f"Coefficient History for {symbols[0]}:{symbols[1]}")
+            ax.set_ylabel('Coefficient')
+
+            # Y Limits. Coefficients range from -1 to 1
+            ax.set_ylim([-1, 1])
+
+            # Plot data if we have history data available
+            if history_data_available:
+                # Plot. There may be more than one set of data for chart. One for each coefficient date range. Convert
+                # single data to list, then loop to plot
+                xdata = times if isinstance(times, list) else [times, ]
+                ydata = coefficients if isinstance(coefficients, list) else [coefficients, ]
+
+                for i in range(0, len(xdata)):
+                    ax.scatter(xdata[i], ydata[i], s=1)
+
+                # Ticks, labels and formats. Fixing xticks with FixedLocator but also using MaxNLocator to avoid
+                # cramped x-labels
+                if len(times[0].array) > 0:
+                    ax.xaxis.set_major_locator(mticker.MaxNLocator(10))
+                    ticks_loc = ax.get_xticks().tolist()
+                    ax.xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
+                    ax.set_xticklabels(ticks_loc)
+                    ax.xaxis.set_major_formatter(self.__tick_fmt_time)
+                    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+                else:
+                    ax.set_xticklabels([])
+
+                # Legend
+                ax.legend([f"{Config().get('monitor.calculations.long.from')} Minutes",
+                           f"{Config().get('monitor.calculations.medium.from')} Minutes",
+                           f"{Config().get('monitor.calculations.short.from')} Minutes"])
+
+                # Lines showing divergence threshold. 2 if we are monitoring inverse correlations.
+                if divergence_threshold is not None:
+                    ax.axhline(y=divergence_threshold, color="red", label='_nolegend_', linewidth=1)
+                    if monitor_inverse:
+                        ax.axhline(y=divergence_threshold * -1, color="red", label='_nolegend_', linewidth=1)
 
             # Layout with padding between charts
             self.__fig.tight_layout(pad=0.5)
