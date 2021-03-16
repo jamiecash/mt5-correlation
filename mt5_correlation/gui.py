@@ -52,7 +52,8 @@ class MonitorFrame(wx.Frame):
 
         # Create correlation instance to maintain state of calculated coefficients. Set min coefficient from config
         self.__cor = cor.Correlation(monitoring_threshold=self.__config.get("monitor.monitoring_threshold"),
-                                     divergence_threshold=self.__config.get("monitor.divergence_threshold"))
+                                     divergence_threshold=self.__config.get("monitor.divergence_threshold"),
+                                     monitor_inverse=self.__config.get("monitor.monitor_inverse"))
 
         # Status bar. 2 fields, one for monitoring status and one for general status. On open, monitoring status is not
         # monitoring. SetBackgroundColour will change colour of both. Couldn't find a way to set on single field only.
@@ -221,12 +222,8 @@ class MonitorFrame(wx.Frame):
         """
         self.__log.debug(f"Refreshing grid. Timer running: {self.timer.IsRunning()}")
 
-        # Get coefficient data and join to history data
-        coef_data = self.__cor.coefficient_data.copy()
-        hist_data = self.__cor.get_coefficient_history()
-
         # Update data
-        self.table.data = self.__cor.coefficient_data.copy()
+        self.table.data = self.__cor.filtered_coefficient_data.copy()
 
         # Format
         self.table.data.loc[:, 'Base Coefficient'] = self.table.data['Base Coefficient'].map('{:.5f}'.format)
@@ -426,7 +423,9 @@ class MonitorFrame(wx.Frame):
         # Display if we have any data
         self.__log.debug(f"Refreshing history graph {symbol1}:{symbol2}.")
         self.__graph.draw(prices=[symbol_1_price_data, symbol_2_price_data], ticks=[symbol_1_ticks, symbol_2_ticks],
-                          history=[history_data_short, history_data_med, history_data_long], symbols=[symbol1, symbol2])
+                          history=[history_data_short, history_data_med, history_data_long], symbols=[symbol1, symbol2],
+                          divergence_threshold=self.__cor.divergence_threshold,
+                          monitor_inverse=self.__cor.monitor_inverse)
 
         # Un-hide and layout if hidden
         if not self.__graph.IsShown():
@@ -552,13 +551,17 @@ class GraphPanel(wx.Panel):
         self.__axes = None
         self.__fig = None
 
-    def draw(self, prices=None, ticks=None, history=None, symbols=None):
+    def draw(self, prices=None, ticks=None, history=None, symbols=None, divergence_threshold=None,
+             monitor_inverse=False):
         """
         Plot the correlations.
         :param prices: Price data used to calculate base coefficient. List [Symbol1 Price Data, Symbol 2 Price Data]
         :param ticks: Ticks used to calculate last coefficient. List [Symbol1, Symbol2]
         :param history: Coefficient history data. List of data for one or more timeframes.
         :param symbols: Symbols. List [Symbol1, Symbol2]
+        :param divergence_threshold: The divergence threshold. Will be plotted on the coefficients charts if specified.
+        :param monitor_inverse: Are we monitoring inverse correlations. If so, a line for the inverse threshold will be
+            plotted if the divergence threshold is specified.
         :return:
         """
 
@@ -638,6 +641,10 @@ class GraphPanel(wx.Panel):
                                                 f"{Config().get('monitor.calculations.medium.from')} Minutes",
                                                 f"{Config().get('monitor.calculations.short.from')} Minutes"]]
 
+            # lines
+            horiz_lines = [None, None, None, None, [divergence_threshold, divergence_threshold * -1
+                                                    if divergence_threshold is not None and monitor_inverse else None]]
+
             # Draw 5 charts
             for index in range(0, len(self.__axes)):
                 # Titles and axis labels
@@ -678,6 +685,12 @@ class GraphPanel(wx.Panel):
                     plt.setp(self.__axes[index].xaxis.get_majorticklabels(), rotation=mtick_rot[index])
                 else:
                     self.__axes[index].set_xticklabels([])
+
+                # Lines
+                if horiz_lines[index] is not None and isinstance(horiz_lines[index], list):
+                    for line_pos in horiz_lines[index]:
+                        if line_pos is not None:
+                            self.__axes[index].axhline(y=line_pos, color="red", label='_nolegend_', linewidth=1)
 
                 # Legends
                 if legends[index] is not None:

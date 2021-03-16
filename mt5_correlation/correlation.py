@@ -10,7 +10,6 @@ from scipy.stats.stats import pearsonr
 import pickle
 import inspect
 import sys
-import numpy as np
 
 from mt5_correlation.mt5 import MT5
 
@@ -82,6 +81,9 @@ class Correlation:
     # below this threshold will be considered as having diverged
     divergence_threshold = 0.8
 
+    # Flag to determine we monitor and report on inverse correlations
+    monitor_inverse = False
+
     # Toggle on whether we are monitoring or not. Set through start_monitor and stop_monitor
     __monitoring = False
 
@@ -106,13 +108,14 @@ class Correlation:
     # Dict: {Symbol: [retrieved datetime, ticks dataframe]}
     __monitor_tick_data = {}
 
-    def __init__(self, monitoring_threshold=0.9, divergence_threshold=0.8):
+    def __init__(self, monitoring_threshold=0.9, divergence_threshold=0.8, monitor_inverse=False):
         """
         Initialises the Correlation class.
         :param monitoring_threshold: Only correlations that are greater than or equal to this threshold will be
             monitored.
         :param divergence_threshold: Correlations that are being monitored and fall below this threshold are considered
             to have diverged.
+        :param monitor_inverse: Whether we will monitor and report on negative / inverse correlations.
         """
         # Logger
         self.__log = logging.getLogger(__name__)
@@ -126,19 +129,28 @@ class Correlation:
         # Create timer for continuous monitoring
         self.__scheduler = sched.scheduler(time.time, time.sleep)
 
-        # Set thresholds
+        # Set thresholds and flags
         self.monitoring_threshold = monitoring_threshold
         self.divergence_threshold = divergence_threshold
+        self.monitor_inverse = monitor_inverse
 
     @property
     def filtered_coefficient_data(self):
         """
         :return: Coefficient data filtered so that all base coefficients >= monitoring_threshold
         """
+        filtered_data = None
         if self.coefficient_data is not None:
-            return self.coefficient_data.loc[self.coefficient_data['Base Coefficient'] >= self.monitoring_threshold]
-        else:
-            return None
+            if self.monitor_inverse:
+                filtered_data = self.coefficient_data \
+                    .loc[(self.coefficient_data['Base Coefficient'] >= self.monitoring_threshold) |
+                         (self.coefficient_data['Base Coefficient'] <= self.monitoring_threshold * -1)]
+
+            else:
+                filtered_data = self.coefficient_data.loc[self.coefficient_data['Base Coefficient'] >=
+                                                          self.monitoring_threshold]
+
+        return filtered_data
 
     def load(self, filename):
         """
@@ -495,7 +507,7 @@ class Correlation:
         if self.coefficient_data is not None and len(self.coefficient_data.index) > 0:
             data = self.coefficient_data.copy()
 
-            # Filter by symols if specified
+            # Filter by symbols if specified
             data = data.loc[data['Symbol 1'] == symbol1] if symbol1 is not None else data
             data = data.loc[data['Symbol 2'] == symbol2] if symbol2 is not None else data
 
@@ -510,6 +522,23 @@ class Correlation:
                 last_calc = max(col.values)
 
         return last_calc
+
+    def get_base_coefficient(self, symbol1, symbol2):
+        """
+        Returns the base coefficient for the specified symbol pair
+        :param symbol1:
+        :param symbol2:
+        :return:
+        """
+        base_coefficient = None
+        if self.coefficient_data is not None:
+            row = self.coefficient_data[(self.coefficient_data['Symbol 1'] == symbol1) &
+                                        (self.coefficient_data['Symbol 2'] == symbol2)]
+
+            if row is not None and len(row) == 1:
+                base_coefficient = row.iloc[0]['Base Coefficient']
+
+        return base_coefficient
 
     def __monitor(self):
         """
@@ -664,8 +693,11 @@ class Correlation:
                                       (self.coefficient_data['Symbol 2'] == symbol2),
                                       'Last Calculation'] = now
 
+            # Are we an inverse correlation
+            inverse = self.get_base_coefficient(symbol1, symbol2) <= self.monitoring_threshold * -1
+
             # Calculate status and update
-            status = self.__calculate_status(coefficients=coefficients)
+            status = self.__calculate_status(coefficients=coefficients, inverse=inverse)
             self.coefficient_data.loc[(self.coefficient_data['Symbol 1'] == symbol1) &
                                       (self.coefficient_data['Symbol 2'] == symbol2),
                                       'Status'] = status
@@ -676,22 +708,32 @@ class Correlation:
                                    data=[[symbol1, symbol2, coefficients[key], key, date_to]])
                 self.coefficient_history = self.coefficient_history.append(row)
 
-    def __calculate_status(self, coefficients):
+    def __calculate_status(self, coefficients, inverse):
         """
         Calculates the status from the supplied set of coefficients
         :param coefficients: Dict of timeframes and coefficients {timeframe: coefficient} to calculate status from
+        :param: Whether we are calculating status based on normal or inverse correlation
         :return: status
         """
-        status = None
+        status = STATUS_NOT_CALCULATED
         values = coefficients.values()
 
-        if None in values:
-            status = STATUS_NOT_CALCULATED
-        elif all(i >= self.divergence_threshold for i in values):
-            status = STATUS_ABOVE_DIVERGENCE_THRESHOLD
-        elif all(i < self.divergence_threshold for i in values):
-            status = STATUS_BELOW_DIVERGENCE_THRESHOLD
-        else:
-            status = STATUS_INCONSISTENT
+        if None not in values:
+            if self.monitor_inverse and inverse:
+                # Calculation for inverse calculations
+                if all(i <= self.divergence_threshold * -1 for i in values):
+                    status = STATUS_ABOVE_DIVERGENCE_THRESHOLD
+                elif all(i > self.divergence_threshold * -1 for i in values):
+                    status = STATUS_BELOW_DIVERGENCE_THRESHOLD
+                else:
+                    status = STATUS_INCONSISTENT
+            else:
+                # Calculation for standard correlations
+                if all(i >= self.divergence_threshold for i in values):
+                    status = STATUS_ABOVE_DIVERGENCE_THRESHOLD
+                elif all(i < self.divergence_threshold for i in values):
+                    status = STATUS_BELOW_DIVERGENCE_THRESHOLD
+                else:
+                    status = STATUS_INCONSISTENT
 
         return status

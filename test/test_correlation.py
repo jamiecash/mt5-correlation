@@ -14,7 +14,8 @@ class TestCorrelation(unittest.TestCase):
     mock_symbols = [Symbol(name='SYMBOL1', visible=True),
                     Symbol(name='SYMBOL2', visible=True),
                     Symbol(name='SYMBOL3', visible=False),
-                    Symbol(name='SYMBOL4', visible=True)]
+                    Symbol(name='SYMBOL4', visible=True),
+                    Symbol(name='SYMBOL5', visible=True)]
 
     # Start and end date for price data and mock prices: base; correlated; and uncorrelated.
     start_date = None
@@ -38,6 +39,7 @@ class TestCorrelation(unittest.TestCase):
         self.mock_correlated_prices = pd.DataFrame(columns=self.price_columns)
         self.mock_uncorrelated_prices = pd.DataFrame(columns=self.price_columns)
         self.mock_correlated_different_dates = pd.DataFrame(columns=self.price_columns)
+        self.mock_inverse_correlated_prices = pd.DataFrame(columns=self.price_columns)
 
         # Build the price data for the test. One price every 5 minutes for 500 rows. Base will use min for price,
         # correlated will use min + 5 and uncorrelated will use random
@@ -55,6 +57,9 @@ class TestCorrelation(unittest.TestCase):
                 self.mock_correlated_different_dates.append(pd.DataFrame(columns=self.price_columns,
                                                                          data=[[date + timedelta(minutes=100),
                                                                                 date.minute + 5]]))
+            self.mock_inverse_correlated_prices = \
+                self.mock_inverse_correlated_prices.append(pd.DataFrame(columns=self.price_columns,
+                                                                        data=[[date, (date.minute + 5) * -1]]))
 
     @patch('mt5_correlation.mt5.MetaTrader5')
     def test_calculate(self, mock):
@@ -67,40 +72,54 @@ class TestCorrelation(unittest.TestCase):
         mock.symbols_get.return_value = self.mock_symbols
 
         # Correlation class
-        cor = correlation.Correlation()
+        cor = correlation.Correlation(monitoring_threshold=1, monitor_inverse=True)
 
-        # Calculate for price data. We should have 100% matching dates in sets. Get prices should be called 3 times.
-        # We dont have a SYMBOL2 as this is set as not visible. Correlations should be as follows:
+        # Calculate for price data. We should have 100% matching dates in sets. Get prices should be called 4 times.
+        # We don't have a SYMBOL3 as this is set as not visible. Correlations should be as follows:
         #   SYMBOL1:SYMBOL2 should be fully correlated (1)
         #   SYMBOL1:SYMBOL4 should be uncorrelated (0)
-        #   SYMBOL2:SYMBOL4 should be uncorrelated (0)
+        #   SYMBOL1:SYMBOL5 should be negatively correlated
+        #   SYMBOL2:SYMBOL5 should be negatively correlated
         # We will not use p_value as the last set uses random numbers so p value will not be useful.
         mock.copy_rates_range.side_effect = [self.mock_base_prices, self.mock_correlated_prices,
-                                             self.mock_uncorrelated_prices]
+                                             self.mock_uncorrelated_prices, self.mock_inverse_correlated_prices]
         cor.calculate(date_from=self.start_date, date_to=self.end_date, timeframe=5, min_prices=100,
                       max_set_size_diff_pct=100, overlap_pct=100, max_p_value=1)
 
-        # Test the output. We should have 3 rows. S1:S2 c=1, S1:S4 c<1, S2:S4 c<1>
-        self.assertEqual(len(cor.coefficient_data.index), 3, "There should be three correlations rows calculated.")
-        self.assertEqual(cor.coefficient_data.iloc[0, 2], 1, "The correlation for SYMBOL1:SYMBOL2 should be 1.")
-        self.assertTrue(cor.coefficient_data.iloc[1, 2] < 1, "The correlation for SYMBOL1:SYMBOL4 should be <1.")
-        self.assertTrue(cor.coefficient_data.iloc[2, 2] < 1, "The correlation for SYMBOL2:SYMBOL4 should be <1.")
+        # Test the output. We should have 6 rows. S1:S2 c=1, S1:S4 c<1, S1:S5 c=-1, S2:S5 c=-1. We are not checking
+        # S2:S4 or S4:S5
+        self.assertEqual(len(cor.coefficient_data.index), 6, "There should be six correlations rows calculated.")
+        self.assertEqual(cor.get_base_coefficient('SYMBOL1', 'SYMBOL2'), 1,
+                         "The correlation for SYMBOL1:SYMBOL2 should be 1.")
+        self.assertTrue(cor.get_base_coefficient('SYMBOL1', 'SYMBOL4') < 1,
+                        "The correlation for SYMBOL1:SYMBOL4 should be <1.")
+        self.assertEqual(cor.get_base_coefficient('SYMBOL1', 'SYMBOL5'), -1,
+                         "The correlation for SYMBOL1:SYMBOL5 should be -1.")
+        self.assertEqual(cor.get_base_coefficient('SYMBOL2', 'SYMBOL5'), -1,
+                         "The correlation for SYMBOL2:SYMBOL5 should be -1.")
 
-        # Set the monitoring threshold to 1 and get filtered correlations. There should only be 1
-        cor.monitoring_threshold = 1
-        self.assertEqual(len(cor.filtered_coefficient_data.index), 1, "There should only be 1 row in filtered "
-                                                                      "coefficient data.")
+        # Monitoring threshold is 1 and we are monitoring inverse. Get filtered correlations. There should be 3 (S1:S2,
+        # S1:S5 and S2:S5)
+        self.assertEqual(len(cor.filtered_coefficient_data.index), 3,
+                         "There should be 3 rows in filtered coefficient data when we are monitoring inverse "
+                         "correlations.")
 
-        # Now were going to recalculate, but this time:
-        #   SYMBOL1:SYMBOL2 will have non overlapping dates and coefficient should be None. There shouldn't be a row
-        #   SYMBOL1:SYMBOL4 will be correlated
-        #   SYMBOL2:SYMBOL4 will have non overlapping dates and coefficient should be None.  There shouldn't be a row.
+        # Now aren't monitoring inverse correlations. There should only be one correlation when filtered
+        cor.monitor_inverse = False
+        self.assertEqual(len(cor.filtered_coefficient_data.index), 1,
+                         "There should be only 1 rows in filtered coefficient data when we are not monitoring  inverse "
+                         "correlations.")
+
+        # Now were going to recalculate, but this time SYMBOL1:SYMBOL2 will have non overlapping dates and coefficient
+        # should be None. There shouldn't be a row. We should have correlations for S1:S4, S1:S5 and S4:S5
         mock.copy_rates_range.side_effect = [self.mock_base_prices, self.mock_correlated_different_dates,
-                                             self.mock_correlated_prices]
+                                             self.mock_correlated_prices, self.mock_correlated_prices]
         cor.calculate(date_from=self.start_date, date_to=self.end_date, timeframe=5, min_prices=100,
                       max_set_size_diff_pct=100, overlap_pct=100, max_p_value=1)
-        self.assertEqual(len(cor.coefficient_data.index), 1, "There should be one correlations rows calculated.")
+        self.assertEqual(len(cor.coefficient_data.index), 3, "There should be three correlations rows calculated.")
         self.assertEqual(cor.coefficient_data.iloc[0, 2], 1, "The correlation for SYMBOL1:SYMBOL4 should be 1.")
+        self.assertEqual(cor.coefficient_data.iloc[1, 2], 1, "The correlation for SYMBOL1:SYMBOL5 should be 1.")
+        self.assertEqual(cor.coefficient_data.iloc[2, 2], 1, "The correlation for SYMBOL4:SYMBOL5 should be 1.")
 
         # Get the price data used to calculate the coefficients fro symbol 1. It should match mock_base_prices.
         price_data = cor.get_price_data('SYMBOL1')
@@ -127,6 +146,10 @@ class TestCorrelation(unittest.TestCase):
         coefficient = cor.calculate_coefficient(self.mock_base_prices, self.mock_correlated_different_dates)
         self.assertTrue(coefficient < 1, "Coefficient should be None.")
 
+        # Test 2 inversely correlated sets
+        coefficient = cor.calculate_coefficient(self.mock_base_prices, self.mock_inverse_correlated_prices)
+        self.assertEqual(coefficient, -1, "Coefficient should be -1.")
+
     @patch('mt5_correlation.mt5.MetaTrader5')
     def test_get_ticks(self, mock):
         """
@@ -145,7 +168,7 @@ class TestCorrelation(unittest.TestCase):
 
         # We need to start and stop the monitor as this will set the cache time
         cor.start_monitor(interval=10, calculation_params={'from': 10, 'min_prices': 0, 'max_set_size_diff_pct': 0,
-                                                           'overlap_pct':0, 'max_p_value':1,}, cache_time=3)
+                                                           'overlap_pct': 0, 'max_p_value': 1}, cache_time=3)
         cor.stop_monitor()
 
         # Get the ticks within cache time and check that they match
@@ -174,13 +197,13 @@ class TestCorrelation(unittest.TestCase):
         mock.symbols_get.return_value = self.mock_symbols
 
         # Create correlation class. We will set a divergence threshold so that we can test status.
-        cor = correlation.Correlation(divergence_threshold=0.8)
+        cor = correlation.Correlation(divergence_threshold=0.8, monitor_inverse=True)
 
-        # Calculate for price data. We should have 100% matching dates in sets. Get prices should be called 3 times.
+        # Calculate for price data. We should have 100% matching dates in sets. Get prices should be called 4 times.
         # We dont have a SYMBOL2 as this is set as not visible. All pairs should be correlated for the purpose of this
         # test.
         mock.copy_rates_range.side_effect = [self.mock_base_prices, self.mock_correlated_prices,
-                                             self.mock_correlated_prices]
+                                             self.mock_correlated_prices, self.mock_inverse_correlated_prices]
 
         cor.calculate(date_from=self.start_date, date_to=self.end_date, timeframe=5, min_prices=100,
                       max_set_size_diff_pct=100, overlap_pct=100, max_p_value=1)
@@ -190,20 +213,22 @@ class TestCorrelation(unittest.TestCase):
         columns = ['time', 'ask']
         starttime = datetime.now() - timedelta(seconds=10)
         tick_data_s1 = pd.DataFrame(columns=columns)
-        tick_data_s3 = pd.DataFrame(columns=columns)
+        tick_data_s2 = pd.DataFrame(columns=columns)
         tick_data_s4 = pd.DataFrame(columns=columns)
+        tick_data_s5 = pd.DataFrame(columns=columns)
 
         now = datetime.now()
         price_base = 1
         while starttime < now:
             tick_data_s1 = tick_data_s1.append(pd.DataFrame(columns=columns, data=[[starttime, price_base * 0.5]]))
-            tick_data_s3 = tick_data_s1.append(pd.DataFrame(columns=columns, data=[[starttime, price_base * 0.1]]))
+            tick_data_s2 = tick_data_s1.append(pd.DataFrame(columns=columns, data=[[starttime, price_base * 0.1]]))
             tick_data_s4 = tick_data_s1.append(pd.DataFrame(columns=columns, data=[[starttime, price_base * 0.25]]))
+            tick_data_s5 = tick_data_s1.append(pd.DataFrame(columns=columns, data=[[starttime, price_base * -0.25]]))
             starttime = starttime + timedelta(milliseconds=10*random.randint(0, 100))
             price_base += 1
 
         # Patch it in
-        mock.copy_ticks_range.side_effect = [tick_data_s1, tick_data_s3, tick_data_s4]
+        mock.copy_ticks_range.side_effect = [tick_data_s1, tick_data_s2, tick_data_s4, tick_data_s5]
 
         # Start the monitor. Run every second. Use ~10 and ~5 seconds of data. Were not testing the overlap and price
         # data quality metrics here as that is set elsewhere so these can be set to not take effect. Set cache level
@@ -221,19 +246,22 @@ class TestCorrelation(unittest.TestCase):
         # Stop the monitor
         cor.stop_monitor()
 
-        # We should have 2 coefficients calculated for each symbol pair for each date_from value, so 12 in total.
-        self.assertEqual(len(cor.coefficient_history.index), 12)
+        # We should have 2 coefficients calculated for each symbol pair (6), for each date_from value (2),
+        # for each run (2) so 24 in total.
+        self.assertEqual(len(cor.coefficient_history.index), 24)
 
         # We should have 2 coefficients calculated for a single symbol pair and timeframe
         self.assertEqual(len(cor.get_coefficient_history({'Symbol 1': 'SYMBOL1', 'Symbol 2': 'SYMBOL2',
                                                           'Timeframe': 0.66})),
                          2, "We should have 2 history records for SYMBOL1:SYMBOL2 using the 0.66 min timeframe.")
 
-        # The status should be BELOW for SYMBOL1:SYMBOL2, and should be ABOVE for and SYMBOL1:SYMBOL4 and
-        # SYMBOL2:SYMBOL4.
+        # The status should be BELOW for SYMBOL1:SYMBOL2 and ABOVE for SYMBOL1:SYMBOL4 and SYMBOL2:SYMBOL4.
         self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL2') == correlation.STATUS_BELOW_DIVERGENCE_THRESHOLD)
         self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL4') == correlation.STATUS_ABOVE_DIVERGENCE_THRESHOLD)
         self.assertTrue(cor.get_last_status('SYMBOL2', 'SYMBOL4') == correlation.STATUS_ABOVE_DIVERGENCE_THRESHOLD)
+
+        # We are monitoring inverse correlations, status for SYMBOL1:SYMBOL5 should be BELOW
+        self.assertTrue(cor.get_last_status('SYMBOL2', 'SYMBOL5') == correlation.STATUS_BELOW_DIVERGENCE_THRESHOLD)
 
     @patch('mt5_correlation.mt5.MetaTrader5')
     def test_load_and_save(self, mock):
@@ -246,7 +274,7 @@ class TestCorrelation(unittest.TestCase):
         # Patch symbol and price data, then calculate
         mock.symbols_get.return_value = self.mock_symbols
         mock.copy_rates_range.side_effect = [self.mock_base_prices, self.mock_correlated_prices,
-                                             self.mock_correlated_prices]
+                                             self.mock_correlated_prices, self.mock_inverse_correlated_prices]
         cor.calculate(date_from=self.start_date, date_to=self.end_date, timeframe=5, min_prices=100,
                       max_set_size_diff_pct=100, overlap_pct=100, max_p_value=1)
 

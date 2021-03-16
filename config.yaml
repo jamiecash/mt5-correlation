@@ -30,6 +30,7 @@ monitor:
       max_p_value: 0.05
   monitoring_threshold: 0.9
   divergence_threshold: 0.8
+  monitor_inverse: true
   tick_cache_time: 10
   autosave: true
 logging:
