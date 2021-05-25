@@ -255,13 +255,13 @@ class TestCorrelation(unittest.TestCase):
                                                           'Timeframe': 0.66})),
                          2, "We should have 2 history records for SYMBOL1:SYMBOL2 using the 0.66 min timeframe.")
 
-        # The status should be BELOW for SYMBOL1:SYMBOL2 and ABOVE for SYMBOL1:SYMBOL4 and SYMBOL2:SYMBOL4.
-        self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL2') == correlation.STATUS_BELOW_DIVERGENCE_THRESHOLD)
-        self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL4') == correlation.STATUS_ABOVE_DIVERGENCE_THRESHOLD)
-        self.assertTrue(cor.get_last_status('SYMBOL2', 'SYMBOL4') == correlation.STATUS_ABOVE_DIVERGENCE_THRESHOLD)
+        # The status should be DIVERGED for SYMBOL1:SYMBOL2 and CORRELATED for SYMBOL1:SYMBOL4 and SYMBOL2:SYMBOL4.
+        self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL2') == correlation.STATUS_DIVERGED)
+        self.assertTrue(cor.get_last_status('SYMBOL1', 'SYMBOL4') == correlation.STATUS_CORRELATED)
+        self.assertTrue(cor.get_last_status('SYMBOL2', 'SYMBOL4') == correlation.STATUS_CORRELATED)
 
-        # We are monitoring inverse correlations, status for SYMBOL1:SYMBOL5 should be BELOW
-        self.assertTrue(cor.get_last_status('SYMBOL2', 'SYMBOL5') == correlation.STATUS_BELOW_DIVERGENCE_THRESHOLD)
+        # We are monitoring inverse correlations, status for SYMBOL1:SYMBOL5 should be DIVERGED
+        self.assertTrue(cor.get_last_status('SYMBOL2', 'SYMBOL5') == correlation.STATUS_DIVERGED)
 
     @patch('mt5_correlation.mt5.MetaTrader5')
     def test_load_and_save(self, mock):
