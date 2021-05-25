@@ -510,8 +510,10 @@ class DataTable(wx.grid.GridTableBase):
             # Is status one of interest
             value = self.GetValue(row, col)
             if value != "":
-                if value in [cor.STATUS_BELOW_DIVERGENCE_THRESHOLD]:
-                    attr.SetBackgroundColour(wx.YELLOW)
+                if value in [cor.STATUS_DIVERGING]:
+                    attr.SetBackgroundColour(wx.RED)
+                elif value in [cor.STATUS_CONVERGING]:
+                    attr.SetBackgroundColour(wx.GREEN)
                 else:
                     attr.SetBackgroundColour(wx.WHITE)
 

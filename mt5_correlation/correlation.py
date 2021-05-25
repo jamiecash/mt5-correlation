@@ -58,11 +58,20 @@ class CorrelationStatus:
 
 # All status's for symbol pair from monitoring. Status set from assessing coefficient for all timeframes from last run.
 STATUS_NOT_CALCULATED = CorrelationStatus(-1, 'NOT CALC', 'Coefficient could not be calculated')
-STATUS_ABOVE_DIVERGENCE_THRESHOLD = CorrelationStatus(1, 'ABOVE', 'All coefficients equal to or above the divergence '
-                                                                  'threshold')
-STATUS_BELOW_DIVERGENCE_THRESHOLD = CorrelationStatus(2, 'BELOW', 'All coefficients below the divergence threshold')
+STATUS_CORRELATED = CorrelationStatus(1, 'CORRELATED', 'Coefficients for all timeframes are equal to or above the '
+                                                       'divergence threshold')
+STATUS_DIVERGED = CorrelationStatus(2, 'DIVERGED', 'Coefficients for all timeframes are below the divergence threshold')
 STATUS_INCONSISTENT = CorrelationStatus(3, 'INCONSISTENT', 'Coefficients not consistently above or below divergence '
-                                                           'threshold')
+                                                           'threshold and are neither trending towards divergence or '
+                                                           'convergence')
+STATUS_DIVERGING = CorrelationStatus(4, 'DIVERGING', 'Coefficients, when ordered by timeframe, are trending '
+                                                     'towards convergence. The shortest timeframe is below the '
+                                                     'divergence threshold and the longest timeframe is above the '
+                                                     'divergence threshold')
+STATUS_CONVERGING = CorrelationStatus(5, 'CONVERGING', 'Coefficients, when ordered by timeframe, are trending '
+                                                       'towards divergence. The shortest timeframe is above the '
+                                                       'divergence threshold and the longest timeframe is below the '
+                                                       'divergence threshold')
 
 
 class Correlation:
@@ -223,7 +232,7 @@ class Correlation:
 
         # Loop through all symbol pair combinations and calculate coefficient. Make sure you don't double count pairs
         # eg. (USD/GBP AUD/USD vs AUD/USD USD/GBP). Use grid of all symbols with i and j axis. j starts at i + 1 to
-        # avoid duplicating. We will store all coefficients in a dataframe for export as CSV.
+        # avoid duplicating. We will store all coefficients in a dataframe.
         index = 0
         # There will be (x^2 - x) / 2 pairs where x is number of symbols
         num_pair_combinations = int((len(symbols) ** 2 - len(symbols)) / 2)
@@ -387,8 +396,8 @@ class Correlation:
             symbol1_prices_filtered = symbol1_prices[symbol1_prices['time'].isin(intersect_dates)]
             symbol2_prices_filtered = symbol2_prices[symbol2_prices['time'].isin(intersect_dates)]
 
-            # Calculate coefficient. Only use if p value is < 0.01 (highly likely that coefficient is valid and null
-            # hypothesis is false).
+            # Calculate coefficient. Only use if p value is < max_p_value (highly likely that coefficient is valid
+            # and null hypothesis is false).
             coefficient_with_p_value = pearsonr(symbol1_prices_filtered['close'], symbol2_prices_filtered['close'])
             coefficient = None if coefficient_with_p_value[1] > max_p_value else coefficient_with_p_value[0]
 
@@ -716,23 +725,36 @@ class Correlation:
         :return: status
         """
         status = STATUS_NOT_CALCULATED
-        values = coefficients.values()
 
-        if None not in values:
+        # Only continue if we have calculated all coefficients, otherwise we will return STATUS_NOT_CALCULATED
+        if None not in coefficients.values():
+            # Get the values ordered by timeframe descending
+            ordered_values = []
+            for key in sorted(coefficients, reverse=True):
+                ordered_values.append(coefficients[key])
+
             if self.monitor_inverse and inverse:
                 # Calculation for inverse calculations
-                if all(i <= self.divergence_threshold * -1 for i in values):
-                    status = STATUS_ABOVE_DIVERGENCE_THRESHOLD
-                elif all(i > self.divergence_threshold * -1 for i in values):
-                    status = STATUS_BELOW_DIVERGENCE_THRESHOLD
+                if all(i <= self.divergence_threshold * -1 for i in ordered_values):
+                    status = STATUS_CORRELATED
+                elif all(i > self.divergence_threshold * -1 for i in ordered_values):
+                    status = STATUS_DIVERGED
+                elif all(ordered_values[i] <= ordered_values[i+1] for i in range(0, len(ordered_values)-1, 1)):
+                    status = STATUS_CONVERGING
+                elif all(ordered_values[i] > ordered_values[i+1] for i in range(0, len(ordered_values)-1, 1)):
+                    status = STATUS_DIVERGING
                 else:
                     status = STATUS_INCONSISTENT
             else:
                 # Calculation for standard correlations
-                if all(i >= self.divergence_threshold for i in values):
-                    status = STATUS_ABOVE_DIVERGENCE_THRESHOLD
-                elif all(i < self.divergence_threshold for i in values):
-                    status = STATUS_BELOW_DIVERGENCE_THRESHOLD
+                if all(i >= self.divergence_threshold for i in ordered_values):
+                    status = STATUS_CORRELATED
+                elif all(i < self.divergence_threshold for i in ordered_values):
+                    status = STATUS_DIVERGED
+                elif all(ordered_values[i] <= ordered_values[i+1] for i in range(0, len(ordered_values)-1, 1)):
+                    status = STATUS_DIVERGING
+                elif all(ordered_values[i] > ordered_values[i+1] for i in range(0, len(ordered_values)-1, 1)):
+                    status = STATUS_CONVERGING
                 else:
                     status = STATUS_INCONSISTENT
 
