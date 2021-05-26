@@ -1,0 +1,100 @@
+---
+calculate:
+  from:
+    days:
+      __label: Calculate from (days)
+      __helptext: The number of days of data to be used to calculate the coefficient.
+  timeframe:
+    __label: Timeframe
+    __helptext: The timeframe for price candles to use for the calculation. Possible values are 1=1 Minute candles; 2=2 Minute candles; 3=3 Minute candles; 4=4 Minute candles; 5=5 Minute candles; 6=6 Minute candles; 10=10 Minute candles; 15=15 Minute candles; 20=20 Minute candles; 30=30 Minute candles; 16385=1 Hour candles; 16386=2 Hour candles; 16387=3 Hour candles; 16388=4 Hour candles; 16390=6 Hour candles; 16392=8 Hour candles; 16396=12 Hour candles; 16408=1 Day candles; 32769=1 Week candles; or 49153=1 Month candles.
+  min_prices:
+    __label: Min Prices
+    __helptext: The minimum number of candles required to calculate a coefficient from. If any of the symbols do not have at least this number of candles then the coefficient won't be calculated.
+  max_set_size_diff_pct:
+    __label: Min Set Size Difference %
+    __helptext: For a meaningful coefficient calculation, the two sets of data should be of a similar size. This setting specifies the % difference allowed for a correlation to be calculated. The smallest set of candle data must be at least this values % of the largest set.
+  overlap_pct:
+    __label: Overlap %
+    __helptext: The dates and times in the two sets of data must match. The coefficient will only be calculated against the dates that overlap. Any non overlapping dates will be discarded. This setting specifies the minimum size of the overlapping data when compared to the smallest set as a %. A coefficient will not be calculated if this threshold is not met.
+  max_p_value:
+    __label: Max Pearsonr P Value
+    __helptext: The maximum P value for the coefficient to be considered valid. A full explanation on the correlation coefficient P value is available in the scipy pearsonr documentation.
+monitor:
+  interval:
+    __label: Monitoring Interval
+    __helptext: The number of seconds between monitoring events.
+  calculations:
+    long:
+      __label: Long
+      __helptext: The settings for the correlation calculation using the longest timeframe.
+      from:
+        __label: From (Minutes)
+        __helptext: The number of minutes of data to be used to calculate the long coefficient.
+      min_prices:
+        __label: Min Prices
+        __helptext: Tick data will be converted to 1 second candles prior to calculation. This will enable data to be matched between symbols. This setting specifies the minimum number of price candles required to calculate a coefficient from. If any of the symbols do not have at least number of candles then the coefficient won't be calculated.
+      max_set_size_diff_pct:
+        __label: Max Set Size Difference %
+        __helptext: For a meaningful coefficient calculation, the two sets of data should be of a similar size. This setting specifies the % difference allowed for a correlation to be calculated. The smallest set of price candles must be at least this values % of the largest set.
+      overlap_pct:
+        __label: Overlap %
+        __helptext: The dates and times in the two sets of data must match. The ticks will be converted to 1 second price candles before calculation. The coefficient will only be calculated against the times from the candles that overlap. Any non overlapping times will be discarded. This setting specifies the minimum size of the overlapping data when compared to the smallest set as a %. A coefficient will not be calculated if this threshold is not met.
+      max_p_value:
+        __label: Max Pearsonr P Value
+        __helptext: The maximum P value for the coefficient to be considered valid. A full explanation on the correlation coefficient P value is available in the scipy pearsonr documentation.
+    medium:
+      __label: Medium
+      __helptext: The settings for the correlation calculation using a medium timeframe.
+      from:
+        __label: From (Minutes)
+        __helptext: The number of minutes of data to be used to calculate the medium coefficient.
+      min_prices:
+        __label: Min Prices
+        __helptext: Tick data will be converted to 1 second candles prior to calculation. This will enable data to be matched between symbols. This setting specifies the minimum number of price candles required to calculate a coefficient from. If any of the symbols do not have at least number of candles then the coefficient won't be calculated.
+      max_set_size_diff_pct:
+        __label: Max Set Size Difference %
+        __helptext: For a meaningful coefficient calculation, the two sets of data should be of a similar size. This setting specifies the % difference allowed for a correlation to be calculated. The smallest set of price candles must be at least this values % of the largest set.
+      overlap_pct:
+        __label: Overlap %
+        __helptext: The dates and times in the two sets of data must match. The ticks will be converted to 1 second price candles before calculation. The coefficient will only be calculated against the times from the candles that overlap. Any non overlapping times will be discarded. This setting specifies the minimum size of the overlapping data when compared to the smallest set as a %. A coefficient will not be calculated if this threshold is not met.
+      max_p_value:
+        __label: Max Pearsonr P Value
+        __helptext: The maximum P value for the coefficient to be considered valid. A full explanation on the correlation coefficient P value is available in the scipy pearsonr documentation.
+    short:
+      __label: Short
+      __helptext: The settings for the correlation calculation using the shortest timeframe.
+      from:
+        __label: From (Minutes)
+        __helptext: The number of minutes of data to be used to calculate the short coefficient.
+      min_prices:
+        __label: Min Prices
+        __helptext: Tick data will be converted to 1 second candles prior to calculation. This will enable data to be matched between symbols. This setting specifies the minimum number of price candles required to calculate a coefficient from. If any of the symbols do not have at least number of candles then the coefficient won't be calculated.
+      max_set_size_diff_pct:
+        __label: Max Set Size Difference %
+        __helptext: For a meaningful coefficient calculation, the two sets of data should be of a similar size. This setting specifies the % difference allowed for a correlation to be calculated. The smallest set of price candles must be at least this values % of the largest set.
+      overlap_pct:
+        __label: Overlap %
+        __helptext: The dates and times in the two sets of data must match. The ticks will be converted to 1 second price candles before calculation. The coefficient will only be calculated against the times from the candles that overlap. Any non overlapping times will be discarded. This setting specifies the minimum size of the overlapping data when compared to the smallest set as a %. A coefficient will not be calculated if this threshold is not met.
+      max_p_value:
+        __label: Max Pearsonr P Value
+        __helptext: The maximum P value for the coefficient to be considered valid. A full explanation on the correlation coefficient P value is available in the scipy pearsonr documentation.
+  monitoring_threshold:
+    __label: Monitoring Threshold
+    __helptext: Only pairs with a coefficient over this threshold will be displayed and monitored.
+  divergence_threshold:
+    __label: Divergence Threshold
+    __helptext: The application will consider a pair to have diverged if the correlation coefficient for all timeframes (long, medium and short) falls below this threshold.
+  monitor_inverse:
+    __label: Monitor Inverse
+    __helptext: Monitor Inverse Correlations (uses negative scale with -1 being fully inversly correlated)
+  tick_cache_time:
+    __label: Tick Cache Time
+    __helptext: Every calculation requires tick data for both symbols. Tick data will be cached for this number of seconds before being retrieved from MetaTrader. Some caching is recommended as a single monitoring run will request the same data for symbols that form multiple correlated pairs.
+  autosave:
+    __label: Auto Save
+    __helptext: Whether to auto save after every monitoring event. If a file was opened or has been saved, then the data will be saved to this file, otherwise the data will be saved to a file named autosave.cpd.
+developer:
+  inspection:
+    __label: Inspection
+    __helptext: Provide GUI Inspection guidelines for developers modifying the GUI.
+...

@@ -72,15 +72,15 @@ logging:
 developer:
   inspection: false
 window:
-  x: 101
-  y: 9
+  x: 73
+  y: 0
   width: 1510
   height: 956
   style: 541072960
 settings_window:
   x: 354
   y: 299
-  width: 664
-  height: 317
+  width: 624
+  height: 328
   style: 524352
 ...

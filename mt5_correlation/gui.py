@@ -7,7 +7,7 @@ import matplotlib
 import matplotlib.ticker as mticker
 
 from mt5_correlation import correlation as cor
-from mt5_correlation.config import Config, SettingsDialog
+import wxconfig as cfg
 from datetime import datetime, timedelta
 import pytz
 import pandas as pd
@@ -40,15 +40,15 @@ class MonitorFrame(wx.Frame):
     def __init__(self):
         # Super
         wx.Frame.__init__(self, parent=None, id=wx.ID_ANY, title="Divergence Monitor",
-                          pos=wx.Point(x=Config().get('window.x'),
-                                       y=Config().get('window.y')),
-                          size=wx.Size(width=Config().get('window.width'),
-                                       height=Config().get('window.height')),
-                          style=Config().get('window.style'))
+                          pos=wx.Point(x=cfg.Config().get('window.x'),
+                                       y=cfg.Config().get('window.y')),
+                          size=wx.Size(width=cfg.Config().get('window.width'),
+                                       height=cfg.Config().get('window.height')),
+                          style=cfg.Config().get('window.style'))
 
         # Create logger and get config
         self.__log = logging.getLogger(__name__)
-        self.__config = Config()
+        self.__config = cfg.Config()
 
         # Create correlation instance to maintain state of calculated coefficients. Set min coefficient from config
         self.__cor = cor.Correlation(monitoring_threshold=self.__config.get("monitor.monitoring_threshold"),
@@ -292,7 +292,7 @@ class MonitorFrame(wx.Frame):
         Opens the settings dialog
         :return:
         """
-        settings_dialog = SettingsDialog(parent=self, exclude=['window'])
+        settings_dialog = cfg.SettingsDialog(parent=self, exclude=['window'])
         res = settings_dialog.ShowModal()
         if res == wx.ID_OK:
             # Reload relevant parts of app
@@ -347,7 +347,7 @@ class MonitorFrame(wx.Frame):
 
             if reload_logger:
                 self.__log.info("Settings updated. Reloading logger.")
-                log_config = Config().get('logging')
+                log_config = cfg.Config().get('logging')
                 logging.config.dictConfig(log_config)
 
             if reload_graph:
@@ -474,7 +474,7 @@ class DataTable(wx.grid.GridTableBase):
         self.data = data
 
         # Get divergence threshold from app config
-        self.divergence_threshold = Config().get('monitor.divergence_threshold')
+        self.divergence_threshold = cfg.Config().get('monitor.divergence_threshold')
 
     def GetNumberRows(self):
         return len(self.data)
@@ -505,7 +505,7 @@ class DataTable(wx.grid.GridTableBase):
         attr = wx.grid.GridCellAttr()
 
         # If column is last coefficient, get value and check against threshold. Highlight if diverged.
-        threshold = Config().get('monitor.divergence_threshold')
+        threshold = cfg.Config().get('monitor.divergence_threshold')
         if col in [MonitorFrame.COLUMN_STATUS]:
             # Is status one of interest
             value = self.GetValue(row, col)
@@ -687,9 +687,9 @@ class GraphPanel(wx.Panel):
                     ax.set_xticklabels([])
 
                 # Legend
-                ax.legend([f"{Config().get('monitor.calculations.long.from')} Minutes",
-                           f"{Config().get('monitor.calculations.medium.from')} Minutes",
-                           f"{Config().get('monitor.calculations.short.from')} Minutes"])
+                ax.legend([f"{cfg.Config().get('monitor.calculations.long.from')} Minutes",
+                           f"{cfg.Config().get('monitor.calculations.medium.from')} Minutes",
+                           f"{cfg.Config().get('monitor.calculations.short.from')} Minutes"])
 
                 # Lines showing divergence threshold. 2 if we are monitoring inverse correlations.
                 if divergence_threshold is not None:
