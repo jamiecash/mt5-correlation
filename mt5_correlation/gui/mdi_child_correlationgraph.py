@@ -62,14 +62,18 @@ class MDIChildCorrelationGraph(mdi.CorrelationMDIChild):
 
         # Set Y Labels and tick colours for charts 1 & 2. Left for symbol1, right for symbol2
         for i in range(0, 2):
-            self.__axs[i].set_ylabel(f"{self.symbols[0]}", color=self.__colours[0])
+            self.__axs[i].set_ylabel(f"{self.symbols[0]}", color=self.__colours[0], labelpad=10)
             self.__axs[i].tick_params(axis='y', labelcolor=self.__colours[0])
-            self.__s2axs[i].set_ylabel(f"{self.symbols[1]}", color=self.__colours[1])
+            self.__s2axs[i].set_ylabel(f"{self.symbols[1]}", color=self.__colours[1], labelpad=10)
             self.__s2axs[i].tick_params(axis='y', labelcolor=self.__colours[1])
 
         # Set Y label and limits for 3rd chart. Limits will be coefficients range from -1 to 1
-        self.__axs[2].set_ylabel('Coefficient')
+        self.__axs[2].set_ylabel('Coefficient', labelpad=10)
         self.__axs[2].set_ylim([-1, 1])
+
+        # Set X labels to ''. Workaround as matplotlib is not leaving space for ticks
+        for ax in self.__axs:
+            ax.set_xlabel(" ", labelpad=10)
 
         # Layout with padding between charts
         self.__fig.tight_layout(pad=0.5)
