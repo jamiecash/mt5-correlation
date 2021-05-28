@@ -3,7 +3,7 @@ Application to monitor previously correlated symbol pairs for correlation diverg
 """
 import definitions
 import logging.config
-from mt5_correlation.gui import MonitorFrame
+from mt5_correlation.gui import CorrelationMDIFrame
 import wxconfig as cfg
 import wx
 import wx.lib.mixins.inspection as wit
@@ -32,6 +32,6 @@ if __name__ == "__main__":
         app = wx.App(False)
 
     # Start the app
-    frame = MonitorFrame()
+    frame = CorrelationMDIFrame()
     frame.Show()
     app.MainLoop()
