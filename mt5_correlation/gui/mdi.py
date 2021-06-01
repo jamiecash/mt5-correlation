@@ -76,6 +76,8 @@ class CorrelationMDIFrame(wx.MDIParentFrame):
         menu_view = wx.Menu()
         self.Bind(wx.EVT_MENU, self.__on_view_status, menu_view.Append(wx.ID_ANY, "Status",
                                                                        "View status of correlations."))
+        self.Bind(wx.EVT_MENU, self.__on_view_diverged, menu_view.Append(wx.ID_ANY, "Diverged Symbols",
+                                                                         "View diverged symbols."))
         self.menubar.Append(menu_view, "&View")
 
         # Set menu bar
@@ -257,6 +259,20 @@ class CorrelationMDIFrame(wx.MDIParentFrame):
 
         if opened_instance is None:
             MDIChildStatus(parent=self).Show(True)
+        else:
+            opened_instance.Raise()
+
+    def __on_view_diverged(self, evt):
+        from mt5_correlation.gui.mdi_child_diverged_symbols import MDIChildDivergedSymbols
+
+        # Only open if not already open. If already open then raise to top.
+        opened_instance = None
+        for child in self.GetChildren():
+            if isinstance(child, MDIChildDivergedSymbols):
+                opened_instance = child
+
+        if opened_instance is None:
+            MDIChildDivergedSymbols(parent=self).Show(True)
         else:
             opened_instance.Raise()
 

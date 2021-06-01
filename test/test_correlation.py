@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, PropertyMock
 import time
 import mt5_correlation.correlation as correlation
 import pandas as pd
@@ -121,7 +121,7 @@ class TestCorrelation(unittest.TestCase):
         self.assertEqual(cor.coefficient_data.iloc[1, 2], 1, "The correlation for SYMBOL1:SYMBOL5 should be 1.")
         self.assertEqual(cor.coefficient_data.iloc[2, 2], 1, "The correlation for SYMBOL4:SYMBOL5 should be 1.")
 
-        # Get the price data used to calculate the coefficients fro symbol 1. It should match mock_base_prices.
+        # Get the price data used to calculate the coefficients for symbol 1. It should match mock_base_prices.
         price_data = cor.get_price_data('SYMBOL1')
         self.assertTrue(price_data.equals(self.mock_base_prices), "Price data returned post calculation should match "
                                                                   "mock price data.")
@@ -324,6 +324,38 @@ class TestCorrelation(unittest.TestCase):
 
         # Cleanup. delete the file
         os.remove("unittest.cpd")
+
+    @patch('mt5_correlation.correlation.Correlation.coefficient_data', new_callable=PropertyMock)
+    def test_diverged_symbols(self, mock):
+        """
+        Test that diverged_symbols property correctly groups symbols and counts.
+        :param mock:
+        :return:
+        """
+        # Correlation class
+        cor = correlation.Correlation()
+
+        # Mock the correlation data. Symbol 1 has diverged 3 times; symbols 2 has diverged twice; symbol 3 has
+        # diverged once; symbols 4 has diverged twice and symbol 5 has not diverged at all. Use all diverged status'
+        # (diverged, diverging & converging). Also add a row for a non diverged pair.
+        mock.return_value = pd.DataFrame(columns=['Symbol 1', 'Symbol 2', 'Status'], data=[
+            ['SYMBOL1', 'SYMBOL2', correlation.STATUS_DIVERGED],
+            ['SYMBOL1', 'SYMBOL3', correlation.STATUS_DIVERGING],
+            ['SYMBOL1', 'SYMBOL4', correlation.STATUS_CONVERGING],
+            ['SYMBOL2', 'SYMBOL4', correlation.STATUS_DIVERGED],
+            ['SYMBOL2', 'SYMBOL3', correlation.STATUS_CORRELATED]])
+
+        # Get the diverged_symbols data and check the counts
+        diverged_symbols = cor.diverged_symbols
+        self.assertEqual(diverged_symbols.loc[(diverged_symbols['Symbol'] == 'SYMBOL1')]['Count'].iloc[0], 3,
+                         "Symbol 1 has diverged three times.")
+        self.assertEqual(diverged_symbols.loc[(diverged_symbols['Symbol'] == 'SYMBOL2')]['Count'].iloc[0], 2,
+                         "Symbol 2 has diverged twice.")
+        self.assertEqual(diverged_symbols.loc[(diverged_symbols['Symbol'] == 'SYMBOL3')]['Count'].iloc[0], 1,
+                         "Symbol 3 has diverged once.")
+        self.assertEqual(diverged_symbols.loc[(diverged_symbols['Symbol'] == 'SYMBOL4')]['Count'].iloc[0], 2,
+                         "Symbol 4 has diverged twice.")
+        self.assertFalse('SYMBOL5' in diverged_symbols['Symbol'])
 
 
 if __name__ == '__main__':

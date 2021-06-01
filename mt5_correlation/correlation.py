@@ -161,6 +161,34 @@ class Correlation:
 
         return filtered_data
 
+    @property
+    def diverged_symbols(self):
+        """
+        :return: dataframe containing all diverged, diverging or converging symbols and count of number of
+        divergences for those symbols.
+        """
+        filtered_data = None
+
+        if self.coefficient_data is not None:
+            # Only rows where we have a divergence
+            filtered_data = self.coefficient_data \
+                    .loc[(self.coefficient_data['Status'] == STATUS_DIVERGED) |
+                         (self.coefficient_data['Status'] == STATUS_DIVERGING) |
+                         (self.coefficient_data['Status'] == STATUS_CONVERGING)]
+
+            # We only need the symbols
+            all_symbols = pd.DataFrame(columns=['Symbol', 'Count'],
+                                       data={'Symbol': filtered_data['Symbol 1'].append(filtered_data['Symbol 2']),
+                                             'Count': 1})
+
+            # Group and count. Reset index so that we have named SYMBOL column.
+            filtered_data = all_symbols.groupby(by='Symbol').count().reset_index()
+
+            # Sort
+            filtered_data = filtered_data.sort_values('Count', ascending=False)
+
+            return filtered_data
+
     def load(self, filename):
         """
         Loads calculated coefficients, price data used to calculate them and tick data used during monitoring.
