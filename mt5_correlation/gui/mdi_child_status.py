@@ -125,20 +125,11 @@ class MDIChildStatus(mdi.CorrelationMDIChild):
         symbol1 = self.__grid.GetCellValue(row, COLUMN_SYMBOL1)
         symbol2 = self.__grid.GetCellValue(row, COLUMN_SYMBOL2)
 
-        from mt5_correlation.gui.mdi_child_correlationgraph import MDIChildCorrelationGraph
-
-        # Check if already open
-        instance = None
-        for child in self.GetMDIParent().GetChildren():
-            if isinstance(child,  MDIChildCorrelationGraph):
-                if child.symbols[0] == symbol1 and child.symbols[1] == symbol2:
-                    instance = child
-
-        # If already open, raise to top. Otherwise open
-        if instance is None:
-            MDIChildCorrelationGraph(parent=self.GetMDIParent(), symbol1=symbol1, symbol2=symbol2).Show(True)
-        else:
-            instance.Raise()
+        mdi.FrameManager.open_frame(parent=self.GetMDIParent(),
+                                    frame_module='mt5_correlation.gui.mdi_child_correlationgraph',
+                                    frame_class='MDIChildCorrelationGraph',
+                                    raise_if_open=True,
+                                    symbols=[symbol1, symbol2])
 
 
 class _DataTable(wx.grid.GridTableBase):

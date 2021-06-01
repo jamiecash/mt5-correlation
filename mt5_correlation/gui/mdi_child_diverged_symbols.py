@@ -56,6 +56,9 @@ class MDIChildDivergedSymbols(mdi.CorrelationMDIChild):
         self.__grid.SetMinSize((220, 100))
         sizer.Add(self.__grid, 1, wx.ALL | wx.EXPAND)
 
+        # Bind row doubleclick
+        self.Bind(wx.grid.EVT_GRID_CELL_LEFT_DCLICK, self.__on_doubleckick_row, self.__grid)
+
         # Refresh to populate
         self.refresh()
 
@@ -93,6 +96,21 @@ class MDIChildDivergedSymbols(mdi.CorrelationMDIChild):
 
         # Update row count
         self.__rows = cur_rows
+
+    def __on_doubleckick_row(self, evt):
+        """
+        Open the graphs when a row is doubleclicked.
+        :param evt:
+        :return:
+        """
+        row = evt.GetRow()
+        symbol = self.__grid.GetCellValue(row, COLUMN_SYMBOL)
+
+        mdi.FrameManager.open_frame(parent=self.GetMDIParent(),
+                                    frame_module='mt5_correlation.gui.mdi_child_divergedgraph',
+                                    frame_class='MDIChildDivergedGraph',
+                                    raise_if_open=True,
+                                    symbol=symbol)
 
 
 class _DataTable(wx.grid.GridTableBase):

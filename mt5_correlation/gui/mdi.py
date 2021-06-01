@@ -1,11 +1,15 @@
 import abc
+import importlib
 import logging
+import sys
+
 import pytz
 import wx
 import wxconfig as cfg
 
 from datetime import datetime, timedelta
 
+import mt5_correlation.gui as gui
 from mt5_correlation import correlation as cor
 
 
@@ -249,32 +253,14 @@ class CorrelationMDIFrame(wx.MDIParentFrame):
         self.SetStatusText(f"Status updated at {self.cor.get_last_calculation():%d-%b %H:%M:%S}.", 1)
 
     def __on_view_status(self, evt):
-        from mt5_correlation.gui.mdi_child_status import MDIChildStatus
-
-        # Only open if not already open. If already open then raise to top.
-        opened_instance = None
-        for child in self.GetChildren():
-            if isinstance(child, MDIChildStatus):
-                opened_instance = child
-
-        if opened_instance is None:
-            MDIChildStatus(parent=self).Show(True)
-        else:
-            opened_instance.Raise()
+        FrameManager.open_frame(parent=self, frame_module='mt5_correlation.gui.mdi_child_status',
+                                frame_class='MDIChildStatus',
+                                raise_if_open=True)
 
     def __on_view_diverged(self, evt):
-        from mt5_correlation.gui.mdi_child_diverged_symbols import MDIChildDivergedSymbols
-
-        # Only open if not already open. If already open then raise to top.
-        opened_instance = None
-        for child in self.GetChildren():
-            if isinstance(child, MDIChildDivergedSymbols):
-                opened_instance = child
-
-        if opened_instance is None:
-            MDIChildDivergedSymbols(parent=self).Show(True)
-        else:
-            opened_instance.Raise()
+        FrameManager.open_frame(parent=self, frame_module='mt5_correlation.gui.mdi_child_diverged_symbols',
+                                frame_class='MDIChildDivergedSymbols',
+                                raise_if_open=True)
 
     def __refresh(self):
         """
@@ -305,3 +291,50 @@ class CorrelationMDIChild(wx.MDIChildFrame):
         :return:
         """
         raise NotImplementedError
+
+
+class FrameManager:
+    """
+    Manages the opening and raising of MDIChild frames
+    """
+    @staticmethod
+    def open_frame(parent, frame_module, frame_class, raise_if_open=True, **kwargs):
+        """
+        Opens the frame specified by the frame class
+        :param parent: The MDIParentFrame to open the child frame into
+        :param frame_module: A string specifying the module containing the frame class to open or raise
+        :param frame_class: A string specifying the frame class to open or raise
+        :param raise_if_open: Whether the frame should raise rather than open if an instance is already open.
+        :param kwargs: A dict of parameters to pass to frame constructor. These will also be checked  in raise_if_open to
+            determine uniqueness (i.e. If a frame of the same class is already open but its params are different, then
+            the frame will be opened again with the new params instead of being raised.)
+        :return:
+        """
+
+        # Load the module and class
+        module = importlib.import_module(frame_module)
+        clazz = getattr(module, frame_class)
+
+        # Do we have an opened instance
+        opened_instance = None
+        for child in parent.GetChildren():
+            if isinstance(child, clazz):
+                # do the args match
+                match = True
+                for key in kwargs:
+                    if kwargs[key] != getattr(child, key):
+                        match = False
+
+                # Only open existing instance if args matched
+                if match:
+                    opened_instance = child
+
+        # If we dont have an opened instance or raise_on_open is False then open new frame, otherwise raise it
+        if opened_instance is None or raise_if_open is False:
+            if len(kwargs) == 0:
+                clazz(parent=parent).Show(True)
+            else:
+                clazz(parent=parent, **kwargs).Show(True)
+        else:
+            opened_instance.Raise()
+

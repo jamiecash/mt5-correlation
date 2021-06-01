@@ -30,16 +30,16 @@ class MDIChildCorrelationGraph(mdi.CorrelationMDIChild):
     __axs = None
     __canvas = None
 
-    def __init__(self, parent, symbol1, symbol2):
+    def __init__(self, parent, **kwargs):
         # Super
         wx.MDIChildFrame.__init__(self, parent=parent, id=wx.ID_ANY,
-                                  title=f"Correlation Status for {symbol1}:{symbol2}")
+                                  title=f"Correlation Status for {kwargs['symbols'][0]}:{kwargs['symbols'][1]}")
 
         # Create logger
         self.__log = logging.getLogger(__name__)
 
         # Store the symbols
-        self.symbols = [symbol1, symbol2]
+        self.symbols = kwargs['symbols']
 
         # We will freeze this frame and thaw once constructed to avoid flicker.
         self.Freeze()
