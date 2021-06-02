@@ -69,6 +69,8 @@ logging:
       - console
       - file
       propagate: 0
+charts:
+  colormap: Dark2
 developer:
   inspection: true
 window:

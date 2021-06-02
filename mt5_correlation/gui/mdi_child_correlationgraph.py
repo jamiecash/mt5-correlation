@@ -22,8 +22,8 @@ class MDIChildCorrelationGraph(mdi.CorrelationMDIChild):
     __tick_fmt_date = matplotlib.dates.DateFormatter('%d-%b')
     __tick_fmt_time = matplotlib.dates.DateFormatter('%H:%M:%S')
 
-    # Colors for graph lines fro symbol1 and symbol2
-    __colours = ['green', 'blue']
+    # Colors for graph lines for symbol1 and symbol2. Will use first 2 colours in colormap
+    __colours = matplotlib.cm.get_cmap(cfg.Config().get("charts.colormap")).colors
 
     # Fig, axes and canvas
     __fig = None

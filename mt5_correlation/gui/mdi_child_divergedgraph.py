@@ -1,9 +1,13 @@
 import logging
 import matplotlib.dates
+import matplotlib.pylab as pl
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
+import numpy as mp
+import numpy as np
 import wx
 import wx.lib.scrolledpanel as scrolled
+import wxconfig as cfg
 
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 
@@ -30,7 +34,7 @@ class MDIChildDivergedGraph(mdi.CorrelationMDIChild):
     __fig = None
 
     # Colors for graph lines
-    __colours = ['red', 'green', 'blue', 'pink', 'purple', 'black', 'yellow', 'lightblue']
+    __colours = matplotlib.cm.get_cmap(cfg.Config().get("charts.colormap")).colors
 
     def __init__(self, parent, **kwargs):
         # Super
