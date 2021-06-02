@@ -3,7 +3,6 @@ import matplotlib.dates
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import wx
-import wxconfig as cfg
 import wx.lib.scrolledpanel as scrolled
 
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
@@ -23,10 +22,12 @@ class MDIChildDivergedGraph(mdi.CorrelationMDIChild):
     __tick_fmt_date = matplotlib.dates.DateFormatter('%d-%b')
     __tick_fmt_time = matplotlib.dates.DateFormatter('%H:%M:%S')
 
-    # Fig, axes and canvas
-    __fig = None
-    __axs = None
+    # Panel
+    __panel = None
+
+    # Graph Canvas and Figure
     __canvas = None
+    __fig = None
 
     # Colors for graph lines
     __colours = ['red', 'green', 'blue', 'pink', 'purple', 'black', 'yellow', 'lightblue']
@@ -42,40 +43,18 @@ class MDIChildDivergedGraph(mdi.CorrelationMDIChild):
         # Store the symbol
         self.symbol = kwargs['symbol']
 
-        # We will freeze this frame and thaw once constructed to avoid flicker.
-        self.Freeze()
-
-        # Draw the empty graph. We will populate with data in refresh.
-
-        # Create fig and 1 axes.
-        self.__fig, self.__axs = plt.subplots(1)
-
-        # Set title
-        self.__axs.set_title(f"Price Data for {self.symbol} vs Previously Correlated Symbols")
-
-        # Set Y Labels and tick colours for symbol. This will be set for other symbols on plot
-        for i in range(0, 2):
-            self.__axs.set_ylabel(f"{self.symbol}", color=self.__colours[0], labelpad=10)
-            self.__axs.tick_params(axis='y', labelcolor=self.__colours[0])
-
-        # Hack to stop xaxis dropping outside of window
-        self.__axs.set_xlabel(" ", labelpad=10)
-
-        # Layout with padding between charts
-        self.__fig.tight_layout(pad=0.5)
-
-        # Create panel and sizer. This will provide scrollbar
-        panel = scrolled.ScrolledPanel(self, wx.ID_ANY)
+        # Create panel and sizer
+        self.__panel = scrolled.ScrolledPanel(self, wx.ID_ANY)
         sizer = wx.BoxSizer()
-        panel.SetSizer(sizer)
+        self.__panel.SetSizer(sizer)
 
-        # Add fig to canvas and canvas to sizer. Thaw window to update
-        self.__canvas = FigureCanvas(panel, wx.ID_ANY, self.__fig)
-        sizer.Add(self.__canvas, 1, wx.ALL | wx.EXPAND)
-        self.Thaw()
+        # Create figure and canvas. Add canvas to sizer
+        self.__fig = plt.Figure()
+        self.__canvas = FigureCanvas(self.__panel, wx.ID_ANY, self.__fig)
+        self.__panel.GetSizer().Add(self.__canvas, 1, wx.ALL | wx.EXPAND)
 
         # Setup scrolling
-        panel.SetupScrolling()
+        self.__panel.SetupScrolling()
 
         # Refresh to show content
         self.refresh()
@@ -100,7 +79,8 @@ class MDIChildDivergedGraph(mdi.CorrelationMDIChild):
 
         # Get all symbols and remove the base one. We will need to ensure that this is first in the list
         other_symbols = list(filtered_data['Symbol 1'].append(filtered_data['Symbol 2']).drop_duplicates())
-        other_symbols.remove(self.symbol)
+        if self.symbol in other_symbols:
+            other_symbols.remove(self.symbol)
 
         # Get the tick data for base symbols and other symbols
         symbol_tick_data = self.GetMDIParent().cor.get_ticks(self.symbol, cache_only=True)
@@ -109,29 +89,71 @@ class MDIChildDivergedGraph(mdi.CorrelationMDIChild):
             tick_data = self.GetMDIParent().cor.get_ticks(symbol, cache_only=True)
             other_tick_data.append(tick_data)
 
-        # Plot tick data for the base symbol
-        self.__axs.plot(symbol_tick_data['time'], symbol_tick_data['ask'], color=self.__colours[0], label=self.symbol)
+        # We will clear the figure and create new axis on every refresh as the shape will change on refresh if symbols
+        # change
+        self.__fig.clear()
+        axs = self.__fig.add_subplot(111)  # Axis to fill canvas
 
-        # Plot for the other symbols on new axes
+        # Set title
+        axs.set_title(f"Price Data for {self.symbol}:{other_symbols}".replace("'", ""))
+
+        # Set Y Labels and tick colours for symbol. This will be set for other symbols on plot
+        for i in range(0, 2):
+            axs.set_ylabel(f"{self.symbol}", color=self.__colours[0], labelpad=10)
+            axs.tick_params(axis='y', labelcolor=self.__colours[0])
+
+        # Store the lines for the legend
+        lines = []
+
+        # Plot tick data for the base symbol. Store line and label.
+        line = axs.plot(symbol_tick_data['time'], symbol_tick_data['ask'], color=self.__colours[0],
+                        label=self.symbol)[0]
+        lines.append(line)
+
+        # Plot for the other symbols on new axes.
+        spinepos = 0  # Position of spine. Starting at 2nd plot, will be increased for every plot.
         for i in range(0, len(other_tick_data)):
-            new_ax = self.__axs.twinx()
-            new_ax.plot(other_tick_data[i]['time'], other_tick_data[i]['ask'], label=other_symbols[i],
-                        color=self.__colours[i+1])
-            new_ax.set_ylabel(f"{other_symbols[i]}", color=self.__colours[i+1], labelpad=10)
-            new_ax.tick_params(axis='y', labelcolor=self.__colours[i+1])
+            other_axis = axs.twinx()
+
+            # Move spine if we are not on first plot
+            if i > 0:
+                spinepos += 1.15
+                other_axis.spines['right'].set_position(("axes", spinepos))
+
+                # The frame is off, so line of detached spine is invisible. Activate frame and then make patch and
+                # spines invisible
+                other_axis.set_frame_on(True)
+                other_axis.patch.set_visible(False)
+                for sp in other_axis.spines.values():
+                    sp.set_visible(False)
+
+                # Show the right spline
+                other_axis.spines['right'].set_visible(True)
+
+            # Plot. We will use a lighter line for the other symbols. Store line.
+            line = other_axis.plot(other_tick_data[i]['time'], other_tick_data[i]['ask'], color=self.__colours[i + 1],
+                                   label=other_symbols[i], linestyle='solid', linewidth=0.5)[0]
+            lines.append(line)
+
+            # Set y label, label colour and tick colour
+            other_axis.set_ylabel(f"{other_symbols[i]}", color=self.__colours[i + 1], labelpad=10)
+            other_axis.tick_params(axis='y', labelcolor=self.__colours[i + 1])
 
         # Ticks, labels and formats. Fixing xticks with FixedLocator but also using MaxNLocator to avoid
         # cramped x-labels
         if len(symbol_tick_data['time']) > 0:
-            self.__axs.xaxis.set_major_locator(mticker.MaxNLocator(10))
-            ticks_loc = self.__axs.get_xticks().tolist()
-            self.__axs.xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
-            self.__axs.set_xticklabels(ticks_loc)
-            self.__axs.xaxis.set_major_formatter(self.__tick_fmt_time)
-            plt.setp(self.__axs.xaxis.get_majorticklabels(), rotation=45)
+            axs.xaxis.set_major_locator(mticker.MaxNLocator(10))
+            ticks_loc = axs.get_xticks().tolist()
+            axs.xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
+            axs.set_xticklabels(ticks_loc)
+            axs.xaxis.set_major_formatter(self.__tick_fmt_time)
+            plt.setp(axs.xaxis.get_majorticklabels(), rotation=45)
 
         # Legend
-        #self.__axs.legend([self.symbol, ] + other_symbols)
+        # axs.legend(lines, [line.get_label() for line in lines], loc=0)
+
+        # Tight layout
+        self.__fig.tight_layout()
 
         # Redraw canvas
         self.__canvas.draw()

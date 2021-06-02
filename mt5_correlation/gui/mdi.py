@@ -1,15 +1,14 @@
 import abc
 import importlib
 import logging
-import sys
 
 import pytz
 import wx
+import wx.lib.inspection as ins
 import wxconfig as cfg
 
 from datetime import datetime, timedelta
 
-import mt5_correlation.gui as gui
 from mt5_correlation import correlation as cor
 
 
@@ -83,6 +82,14 @@ class CorrelationMDIFrame(wx.MDIParentFrame):
         self.Bind(wx.EVT_MENU, self.__on_view_diverged, menu_view.Append(wx.ID_ANY, "Diverged Symbols",
                                                                          "View diverged symbols."))
         self.menubar.Append(menu_view, "&View")
+
+        # Help menu and items
+        help_menu = wx.Menu()
+        self.Bind(wx.EVT_MENU, self.__on_view_log, help_menu.Append(wx.ID_ANY, "View Log", "Show application log."))
+        self.Bind(wx.EVT_MENU, self.__on_view_help, help_menu.Append(wx.ID_ANY, "Help",
+                                                                     "Show application usage instructions."))
+
+        self.menubar.Append(help_menu, "&Help")
 
         # Set menu bar
         self.SetMenuBar(self.menubar)
@@ -262,6 +269,16 @@ class CorrelationMDIFrame(wx.MDIParentFrame):
                                 frame_class='MDIChildDivergedSymbols',
                                 raise_if_open=True)
 
+    def __on_view_log(self, evt):
+        FrameManager.open_frame(parent=self, frame_module='mt5_correlation.gui.mdi_child_log',
+                                frame_class='MDIChildLog',
+                                raise_if_open=True)
+
+    def __on_view_help(self, evt):
+        FrameManager.open_frame(parent=self, frame_module='mt5_correlation.gui.mdi_child_help',
+                                frame_class='MDIChildHelp',
+                                raise_if_open=True)
+
     def __refresh(self):
         """
         Refresh all open child frames
@@ -272,11 +289,12 @@ class CorrelationMDIFrame(wx.MDIParentFrame):
         for child in children:
             if isinstance(child, CorrelationMDIChild):
                 child.refresh()
-            elif isinstance(child, wx.StatusBar):
+            elif isinstance(child, wx.StatusBar) or isinstance(child, ins.InspectionFrame):
                 # Ignore
                 pass
             else:
-                raise Exception(f"MDI Child for application must implement CorrelationMDIChild.")
+                raise Exception(f"MDI Child for application must implement CorrelationMDIChild. MDI Child is "
+                                f"{type(child)}.")
 
 
 class CorrelationMDIChild(wx.MDIChildFrame):
@@ -305,9 +323,9 @@ class FrameManager:
         :param frame_module: A string specifying the module containing the frame class to open or raise
         :param frame_class: A string specifying the frame class to open or raise
         :param raise_if_open: Whether the frame should raise rather than open if an instance is already open.
-        :param kwargs: A dict of parameters to pass to frame constructor. These will also be checked  in raise_if_open to
-            determine uniqueness (i.e. If a frame of the same class is already open but its params are different, then
-            the frame will be opened again with the new params instead of being raised.)
+        :param kwargs: A dict of parameters to pass to frame constructor. These will also be checked  in raise_if_open
+            to determine uniqueness (i.e. If a frame of the same class is already open but its params are different,
+            then the frame will be opened again with the new params instead of being raised.)
         :return:
         """
 
@@ -337,4 +355,3 @@ class FrameManager:
                 clazz(parent=parent, **kwargs).Show(True)
         else:
             opened_instance.Raise()
-
