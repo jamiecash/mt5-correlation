@@ -5,6 +5,7 @@ import logging
 import pytz
 import wx
 import wx.lib.inspection as ins
+import wxconfig
 import wxconfig as cfg
 
 from datetime import datetime, timedelta
@@ -289,7 +290,8 @@ class CorrelationMDIFrame(wx.MDIParentFrame):
         for child in children:
             if isinstance(child, CorrelationMDIChild):
                 child.refresh()
-            elif isinstance(child, wx.StatusBar) or isinstance(child, ins.InspectionFrame):
+            elif isinstance(child, wx.StatusBar) or isinstance(child, ins.InspectionFrame) or \
+                    isinstance(child, wxconfig.SettingsDialog):
                 # Ignore
                 pass
             else:

@@ -8,7 +8,7 @@ calculate:
   overlap_pct: 90
   max_p_value: 0.05
 monitor:
-  interval: 20
+  interval: 10
   calculations:
     long:
       from: 30
@@ -74,10 +74,10 @@ charts:
 developer:
   inspection: true
 window:
-  x: -8
-  y: -8
-  width: 1636
-  height: 1056
+  x: -4
+  y: 1
+  width: 1626
+  height: 1043
   style: 541072960
 settings_window:
   x: 354

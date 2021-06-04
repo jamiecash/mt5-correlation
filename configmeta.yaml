@@ -93,6 +93,10 @@ monitor:
   autosave:
     __label: Auto Save
     __helptext: Whether to auto save after every monitoring event. If a file was opened or has been saved, then the data will be saved to this file, otherwise the data will be saved to a file named autosave.cpd.
+charts:
+  colormap:
+    __label: Color Map
+    __helptext: The matplotlib color pallet to use for plotting graphs. A list of pallets is available at https://matplotlib.org/stable/tutorials/colors/colormaps.html
 developer:
   inspection:
     __label: Inspection
